@@ -1,44 +1,70 @@
 <!--
 Sync Impact Report
 ==================
-Version change: (none) → 1.0.0  [initial ratification; no prior version]
+Version change: 2.0.0 → 2.1.0  [MINOR: new principle + material constraint change]
 
-Replaced placeholders:
-  [PROJECT_NAME]            → pvt-edu-admin-project
-  [PRINCIPLE_1_NAME]        → I.  Spec-Driven Development (NON-NEGOTIABLE)
-  [PRINCIPLE_2_NAME]        → II. TypeScript End-to-End
-  [PRINCIPLE_3_NAME]        → III. Test-First for Domain Logic
-  [PRINCIPLE_4_NAME]        → IV. Role-Based Access Control
-  [PRINCIPLE_5_NAME]        → V.  Simplicity (YAGNI)
-  [SECTION_2_NAME]          → Technical Stack Constraints
-  [SECTION_3_NAME]          → Development Workflow
-  [GOVERNANCE_RULES]        → concrete amendment + versioning rules
-  [CONSTITUTION_VERSION]    → 1.0.0
-  [RATIFICATION_DATE]       → 2026-06-18
-  [LAST_AMENDED_DATE]       → 2026-06-18
+Modified principles:
+  II. TypeScript End-to-End  →  II. TypeScript End-to-End (architecture
+      collapsed to a single Next.js app; the "shared tsconfig across the
+      Next.js app and the Node.js service" wording is updated to a
+      single tsconfig covering UI and API routes.)
+  (other principles unchanged)
 
-Added sections: none beyond placeholder fills
+Added principles:
+  VI. Functional-First (Classes Only When Necessary)
+      Functional programming is the default style: pure functions,
+      immutable data, explicit composition. Classes are used only when
+      a framework or library requires them or when no reasonable
+      functional alternative exists. New principle → MINOR.
+
+Added sections: none
 Removed sections: none
-Principles renamed: none (template slots were all blank)
+
+Modified sections (non-principle):
+  Technical Stack Constraints
+    - "Singapore Government Design System (SGDS)"  →
+      "Singapore Government Design System **v3** (SGDS v3)" (PATCH
+      clarification; pin the version the project standardizes on).
+    - "Backend HTTP layer: a TypeScript HTTP framework selected per
+      feature in plan.md → Technical Context (Express, Fastify, NestJS,
+      or equivalent)"  →
+      "**Next.js Route Handlers** under `app/api/` (App Router). The
+      API and the UI live in a single Next.js application; there is no
+      separate Node.js HTTP service." This is a material constraint
+      change — the per-feature choice deferral is removed.
+    - "Backend runtime: Node.js LTS" is kept (Next.js still runs on
+      Node.js LTS) and rewritten as a property of the single Next.js
+      app rather than a separate service.
 
 Templates requiring updates:
-  - .specify/templates/plan-template.md     ✅ no change (Constitution Check is generic)
+  - .specify/templates/plan-template.md     ✅ no change (Constitution Check is generic;
+                                                per-feature plan will use "single project"
+                                                layout from the plan template's Option 1)
   - .specify/templates/spec-template.md      ✅ no change
   - .specify/templates/tasks-template.md     ✅ no change
   - .specify/templates/checklist-template.md ✅ no change
   - .specify/templates/commands/*.md         ✅ none present
 
 Follow-up TODOs:
-  - TODO(API_FRAMEWORK): pick Express vs Fastify vs NestJS for the first
-    feature in plan.md → Technical Context; not pinned here so the choice
-    stays a per-feature decision unless a later amendment makes it global.
-  - TODO(UNIT_TEST_RUNNER): pick Vitest vs Jest for the first feature
-    in plan.md → Technical Context; same rationale.
-  - TODO(CONTAINER_LAYOUT): choose single Dockerfile vs docker-compose
-    (with MySQL service) at the first feature; doctrine above only fixes
-    "the deliverable ships in a container".
-  - TODO(SGDS_VERSION): pin the Singapore Government Design System
-    package version when the first frontend task is planned.
+  - TODO(FEATURE_001): in plan.md → Project Structure, pick the
+    "single project" layout from .specify/templates/plan-template.md
+    (Option 1) since the app is no longer split into frontend and
+    backend services. Place API route handlers under app/api/ and
+    colocate unit tests.
+  - TODO(FEATURE_001): in plan.md → Technical Context, decide the
+    unit-test runner (Vitest vs Jest). Principle III no longer fixes
+    the ordering but still requires the runner decision here.
+  - TODO(FEATURE_001): in plan.md → Technical Context, decide the
+    container layout (single multi-stage Dockerfile vs docker-compose
+    with a MySQL service). The previous amendment flagged this; it
+    remains a per-feature decision.
+  - TODO(SGDS_V3_PACKAGE): pin the @govtechsg/sgds-react (or
+    equivalent) package version in the first frontend plan so the
+    constitution's "v3" requirement is reflected in package.json.
+  - TODO(FUNCTIONAL_REVIEW): on first PR, verify no class-based
+    service / controller / domain-model code is introduced; the only
+    allowed classes are framework-mandated (typeORM entities, error
+    subclasses where appropriate).
 -->
 
 # pvt-edu-admin-project Constitution
@@ -60,45 +86,42 @@ project is meant to teach.
 
 ### II. TypeScript End-to-End
 
-All source code — backend, frontend, scripts, type definitions, tests, and
-infrastructure glue — MUST be written in **TypeScript** with `strict: true`.
-JavaScript source files (`.js`, `.mjs`, `.cjs`) MUST NOT be introduced
-except as auto-generated build output. The same `tsconfig` compiler options
-MUST be honoured by both the Next.js app and the Node.js service so that
-types cross the network boundary without manual re-declaration.
+All source code — UI, API route handlers, scripts, type definitions,
+tests, and infrastructure glue — MUST be written in **TypeScript** with
+`strict: true`. JavaScript source files (`.js`, `.mjs`, `.cjs`) MUST NOT be
+introduced except as auto-generated build output. A single `tsconfig` MUST
+cover the whole application so that types cross the network boundary
+between the React UI and the API routes without manual re-declaration.
 
 **Rationale:** The requirement is "a single language across both frontend
 and backend". Drift to JS fragments is the silent failure mode that erodes
 that property.
 
-### III. Test-First for Domain Logic
+### III. Unit Tests Required
 
-All domain rules — teacher/class CRUD invariants, scheduling constraints,
-authorization checks, billing math — MUST follow a test-first cycle: write
-a failing unit test, confirm it fails for the right reason, then implement
-to green. UI plumbing, generated code, and one-off scripts are exempt.
-Tests MUST live next to the code they cover (e.g., `tests/unit/...`,
-`co-located __tests__/`) and MUST be runnable without a network call or a
-live MySQL connection (use the typeORM test fixtures / in-memory patterns
-documented in `plan.md`).
+Unit tests MUST exist for all domain logic — teacher/class CRUD invariants,
+scheduling constraints, and any computation specific to the active feature.
+Tests MUST be runnable without a network call or a live MySQL connection
+(use the typeORM test fixtures / in-memory patterns documented in `plan.md`).
+The order in which tests and implementation are written is the contributor's
+choice; the requirement is that every domain rule is covered by a passing
+unit test at the moment the feature is marked done (see Development Workflow).
 
-**Rationale:** Unit tests are an explicit project requirement, and
-test-first is the only discipline that proves the rule is captured rather
-than observed as a side-effect.
+**Rationale:** Unit tests are an explicit project requirement. Dropping the
+test-first ordering keeps the safety net without imposing a process the
+project does not need.
 
-### IV. Role-Based Access Control
+### IV. Single Role: Administrator
 
-Every mutating endpoint or admin action MUST check the caller's role before
-executing. The role catalogue MUST be enumerated in `data-model.md` for any
-feature that introduces a new role or permission. Authorization rules MUST
-be expressed declaratively (a policy table or equivalent), not scattered
-across handlers. The current minimum role set is **Administrator**; new
-roles (e.g., Teacher, Student, Parent) require an entry in the feature
-spec before they may be coded.
+The application has exactly one user role: **Administrator**. There is no
+authentication boundary, no role switcher, and no per-action authorization
+check in the current scope. Introducing any additional role (e.g., Teacher,
+Student, Parent) is a constitutional amendment and MUST NOT be done in a
+feature spec without first amending this principle.
 
-**Rationale:** Admin tools serve distinct audiences. Implicit authorization
-is the most common source of breaches in this category of app, and
-centralizing the policy makes it auditable in one place.
+**Rationale:** The application is an internal admin tool. A multi-role
+authorization framework is over-engineering for the stated scope and adds
+attack surface without corresponding value.
 
 ### V. Simplicity (YAGNI)
 
@@ -111,25 +134,46 @@ forward-looking decision.
 **Rationale:** Interview prep rewards clarity. A small, sharp implementation
 demonstrates mastery better than a sprawling one.
 
+### VI. Functional-First (Classes Only When Necessary)
+
+Code MUST be written in a functional style by default: pure functions,
+immutable data structures, and explicit composition over inheritance.
+React code MUST use function components and hooks (no class components).
+Server code MUST be organized as small modules of pure functions (no
+class-based service layers, controllers, or repositories). Classes are
+permitted only when a framework or library requires them — for example,
+**typeORM entity classes** — or when no reasonable functional alternative
+exists. Introducing a class for any other reason requires justification in
+`plan.md` → Complexity Tracking.
+
+**Rationale:** Functional code is easier to unit test (Principle III falls
+out naturally), easier to reason about, and aligns with the interview-prep
+goal of demonstrating clarity of intent.
+
 ## Technical Stack Constraints
 
 - **Language**: TypeScript with `strict: true`. No `.js` source files.
-- **Backend runtime**: Node.js LTS.
-- **Backend HTTP layer**: a TypeScript HTTP framework selected per feature
-  in `plan.md` → Technical Context (Express, Fastify, NestJS, or equivalent).
+- **Runtime**: Node.js LTS, via a single **Next.js** application. The
+  application is one process; the UI lives under `app/` (or `src/app/`)
+  and the API lives under `app/api/` as **Next.js Route Handlers**. There
+  is no separate Node.js HTTP service, Express/Fastify/NestJS app, or
+  microservice in scope.
 - **Database**: MySQL (RDBMS). All persistence MUST go through **typeORM**
   entities, repositories, and migrations. Raw SQL is permitted only inside
   typeORM migrations or query builders, not in business code.
 - **Frontend**: **Next.js** with the **App Router**, using **client
   components** (client-side rendering is the default for this project).
-- **UI components**: the **Singapore Government Design System (SGDS)** is
-  the preferred component library. Third-party UI deps require justification
-  in `plan.md` and a Complexity Tracking entry.
+- **UI components**: the **Singapore Government Design System v3 (SGDS v3)**
+  is the required component library for the active feature. Third-party
+  UI deps require justification in `plan.md` and a Complexity Tracking
+  entry. The exact `@govtechsg/sgds-react` (or equivalent) package version
+  is pinned in `package.json` at the first frontend task — see TODO in the
+  Sync Impact Report.
 - **Delivery**: the application MUST run in a **Docker** container. The
-  container layout (single image, multi-stage build, or `docker-compose`
-  with a MySQL service) is decided per feature in `plan.md`.
-- **Testing**: unit tests are mandatory. The runner (Vitest, Jest, or
-  equivalent) is decided per feature in `plan.md`.
+  container layout (single multi-stage image, or `docker-compose` with a
+  MySQL service) is decided per feature in `plan.md`.
+- **Testing**: unit tests are mandatory (per Principle III). The runner
+  (Vitest, Jest, or equivalent) is decided per feature in `plan.md`.
 - **Secrets**: MUST NOT be committed. Local secrets go in `.env.local`
   (gitignored) or are passed at container run time. The repo-level `.env`
   is JSON and holds model configuration only — see `CLAUDE.md` → Environment.
@@ -151,7 +195,7 @@ demonstrates mastery better than a sprawling one.
   README is incomplete.
 - Pull requests for code MUST link the active spec, plan, and tasks.
   Reviewers MUST reject PRs whose artifacts were not produced through the
-  SDD skills, and PRs that violate Principle II–V.
+  SDD skills, and PRs that violate Principle II–VI.
 - When in doubt, prefer amending this constitution over maintaining
   out-of-band conventions.
 
@@ -168,10 +212,10 @@ demonstrates mastery better than a sprawling one.
   - **PATCH** — clarifications, wording fixes, non-semantic refinements.
 - Compliance review: every `/speckit-implement` run MUST include a
   Constitution Check section in `plan.md`; deviations from Principles
-  II–V require an entry in `plan.md` → Complexity Tracking with the
+  II–VI require an entry in `plan.md` → Complexity Tracking with the
   simpler alternative that was rejected and why.
 - The authoritative runtime guidance for coding agents is `CLAUDE.md`;
   the authoritative process guidance is the Spec Kit skill documentation
   under `.claude/skills/speckit-*`.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-18
+**Version**: 2.1.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-18
