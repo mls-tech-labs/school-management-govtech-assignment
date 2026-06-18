@@ -1,0 +1,57 @@
+# Docker Compose for the Private Education Admin project.
+#
+# Brings up the MySQL 8 data store used by the Teachers and Classes features.
+# The schema and reference-list seeds are bootstrapped from
+# ./mysql/init/01-schema-and-seed.sql on the first run (the script is idempotent
+# and runs every time the container starts with an empty /var/lib/mysql).
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml down            # stop + remove containers
+#   docker compose -f docker/docker-compose.yml down -v         # stop + remove containers AND the named volume (wipes the DB)
+#
+# Environment:
+#   MYSQL_ROOT_PASSWORD  - root password (default below). Override via your shell or a .env file
+#                          next to this compose file. The .env at the repo root is JSON model-config
+#                          and is NOT used by compose for variable substitution.
+#   MYSQL_PORT           - host port to expose MySQL on (default 3306).
+
+name: pvt-edu-admin
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pvt-edu-mysql
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=caching_sha2_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-admin}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # /docker-entrypoint-initdb.d is auto-executed by the official MySQL image on first boot
+      # (when /var/lib/mysql is empty). Files are run in alphabetical order.
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - "CMD"
+        - "mysqladmin"
+        - "ping"
+        - "-h"
+        - "127.0.0.1"
+        - "-uroot"
+        - "-p${MYSQL_ROOT_PASSWORD:-rootpass}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  mysql_data:
+    name: pvt-edu-mysql-data
