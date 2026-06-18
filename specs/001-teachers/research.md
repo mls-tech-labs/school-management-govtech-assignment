@@ -1,0 +1,260 @@
+# Research: Teachers (001-teachers)
+
+**Date**: 2026-06-18
+**Spec**: [./spec.md](./spec.md)
+**Plan**: [./plan.md](./plan.md)
+
+This document captures the open Technical Context decisions from `plan.md`,
+each resolved to a single choice with rationale and the rejected alternatives.
+Every entry below is consulted at implementation time; no decision is left to
+the implementer.
+
+---
+
+## 1.1. Unit-test runner: Vitest vs Jest
+
+**Decision**: **Vitest** (latest 1.x as of 2026-06-18).
+
+**Rationale**:
+- Native TypeScript / ESM support out of the box — no `ts-jest`, no `babel-jest`, no
+  transformer config. The Constitution's Principle II (`strict: true` TS end-to-end)
+  is satisfied with no extra plumbing.
+- Significantly faster startup and watch loop than Jest (no Babel transform per file).
+- Compatible `expect`, `describe`, `it`, `vi.fn`, `vi.mock` API — most Jest patterns port
+  verbatim.
+- Plays well with Next.js 15's Turbopack + ESM pipeline; Jest is still on CommonJS
+  assumptions and needs workarounds for Next 15 App Router test scenarios.
+- `vitest.config.ts` lives at the repo root and is referenced by `npm test` /
+  `npm run test:unit`.
+
+**Alternatives considered**:
+- **Jest** (latest 29.x with `ts-jest` / `babel-jest`) — the historical default, the
+  most popular runner in the React/Next ecosystem, and the most Stack-Overflow answers.
+  Rejected because (a) it requires extra transformer config to play nicely with Next
+  15's ESM + App Router, (b) watch mode is noticeably slower, and (c) no test in this
+  feature requires Jest-only APIs (`jest.mock` factories, snapshot serializers) that
+  Vitest can't match.
+- **Node's built-in `node:test`** — zero dependencies, native TS via `--experimental-strip-types`.
+  Rejected for Stage 1 because (a) it doesn't yet have the equivalent of Vitest's
+  coverage UX, (b) the toolchain is still flagged experimental in Node LTS, and (c) the
+  team is more likely to have prior Vitest/Jest experience.
+
+**TODO closure**: This resolves the `TODO(FEATURE_001)` in the Constitution's Sync
+Impact Report ("in plan.md → Technical Context, decide the unit-test runner (Vitest
+vs Jest)").
+
+---
+
+## 1.2. Container layout: single multi-stage Dockerfile vs `docker compose` with a MySQL service
+
+**Decision**: **`docker compose` with two services** (`app`, `mysql`).
+
+**Rationale**:
+- The Constitution's Technical Stack Constraints require both the app and the
+  MySQL database to run in Docker containers. A single multi-stage image that
+  bundles both would put a database inside an application container — fine for a
+  one-off demo, but bad practice (no independent scaling, no independent restart,
+  no volume strategy for the database).
+- `docker compose` keeps the two services separate, lets each have its own
+  `Dockerfile` / `image` reference, and lets the app's hot-reload loop in dev
+  work without rebuilding the database image.
+- A separate `docker/docker-compose.test.yml` (one service: `mysql`) gives the
+  integration tests a known-good DB without running the app container.
+- Production deployment of a single Next.js app + managed MySQL is the standard
+  pattern; this layout translates directly to a managed DB swap.
+
+**Alternatives considered**:
+- **Single multi-stage Dockerfile** that builds the app and bakes MySQL into the
+  same image. Rejected because (a) it violates the principle of one process per
+  container, (b) it makes the database un-restartable independent of the app, and
+  (c) it has no clean path to a managed MySQL swap in production.
+- **`docker compose` with `mysql` as a `container_name` on the host network, no
+  volumes** — simpler but loses data on `docker compose down`. Rejected because the
+  SC-001 success criterion ("survives server restarts") would fail on every
+  `docker compose down` during development.
+
+**TODO closure**: This resolves the `TODO(FEATURE_001)` in the Constitution's Sync
+Impact Report ("in plan.md → Technical Context, decide the container layout").
+
+---
+
+## 1.3. SGDS v3 package version pin
+
+**Decision**: **`@govtechsg/sgds-react@^3`** in `package.json` (latest 3.x as of
+2026-06-18).
+
+**Rationale**:
+- The Constitution's Technical Stack Constraints require the **Singapore Government
+  Design System v3 (SGDS v3)** as the component library. The TypeScript React
+  package is `@govtechsg/sgds-react` and the major version tracks the SGDS design
+  system version.
+- Pinning to `^3` (caret) gets the latest 3.x and any 3.x.y patch but blocks a
+  jump to 4.x — which would be a design-system upgrade, not a routine update.
+- The exact version at install time is recorded in `package-lock.json`; the caret
+  in `package.json` gives reproducible builds via the lockfile.
+
+**Alternatives considered**:
+- **Exact pin (`3.4.7` etc.)** — no auto-updates. Rejected because (a) we want
+  patch updates without a manual `npm install` edit, and (b) the lockfile already
+  pins the exact version.
+- **Open range (`"latest"`)** — never reproducible. Rejected.
+- **`@govtechsg/sgds` (the older non-React package)** — not maintained for
+  the v3 design system.
+
+**TODO closure**: This resolves the `TODO(SGDS_V3_PACKAGE)` in the Constitution's
+Sync Impact Report.
+
+---
+
+## 1.4. Data access: typeORM version + driver
+
+**Decision**: **`typeorm@^0.3`** (latest 0.3.x as of 2026-06-18) with
+**`mysql2@^3`** as the MySQL driver.
+
+**Rationale**:
+- typeORM 0.3 is the current stable line; 0.3 has the new `DataSource` API
+  (replacing the legacy `createConnection`), the `EntityManager` and
+  `Repository` APIs that the plan uses, and the migration CLI (`typeorm-ts-node-commonjs migration:run`).
+- The Constitution's Technical Stack Constraints require typeORM entities,
+  repositories, and migrations — all of these are first-class in 0.3.
+- `mysql2` is the official typeORM-recommended driver for MySQL; it supports
+  prepared statements, connection pooling, and the auth plugin flow.
+- The plan uses `find()`, `findOne()`, and `save()` only — no QueryBuilder — so
+  the driver doesn't matter beyond the connection string.
+
+**Alternatives considered**:
+- **`mysql` driver** (the older one) — still supported but not recommended; slower
+  and lacks prepared-statement parameter binding fixes. Rejected.
+- **Prisma** — modern, schema-first, with great types. Rejected because the
+  Constitution specifies typeORM, and the per-feature specs are written against
+  typeORM-style entities (decorators, repository methods, migration files).
+
+---
+
+## 1.5. Validation library: Joi vs Zod vs class-validator
+
+**Decision**: **Joi 17.x** (latest stable).
+
+**Rationale**:
+- The Constitution's Principle VII specifies Joi explicitly: "Joi MUST validate
+  every payload that crosses a trust boundary." Zod and class-validator are not
+  in scope under the Constitution.
+- Joi 17 is the current major; 18 is in development as of 2026-06 and is not yet
+  recommended for production. Pin to `^17`.
+- Joi's `.pattern()`, `.valid(... list)`, `.email({ tlds: false })` and
+  `.required()` cover the spec's validation rules cleanly: email format,
+  8-digit `/^[89]\d{7}$/` contact number, subject in the seeded list.
+- Joi schemas live as plain `.ts` modules (per Principle VII), imported by the
+  route handler, and unit-tested directly (no live HTTP).
+
+**Alternatives considered**:
+- **Zod** — modern, TypeScript-first, plays well with `tRPC` and form libs. Rejected
+  because the Constitution specifies Joi.
+- **class-validator** — requires class-based DTOs, conflicts with Principle VI
+  (no class-based code). Rejected.
+- **Joi 18 (alpha / beta)** — would be the latest, but the Constitution + community
+  practice pin on 17.x. Rejected for stability.
+
+---
+
+## 1.6. Missing `.requirements/Full Stack Assignment.md` asset
+
+**Decision**: **Do not block on the missing file**; the spec already enumerates the
+four teacher fields (name, subject, email, contactNumber) and the four classes fields
+(level, name, formTeacherEmail) with concrete validation rules. Proceed against the
+spec.
+
+**Rationale**:
+- The 001-teachers `spec.md` "Input" line references the file
+  (`.requirements/Full Stack Assignment.md`) as the source for the teachers and
+  classes behaviors and Figma design references, but the file is not present in
+  the repo (`ls .requirements/` returns "No such file or directory").
+- The Clarifications (Session 2026-06-18) already pinned every numeric / format
+  detail the spec is missing: subject type (predefined list, FK), contact number
+  format (8 digits, starts 8/9), duplicate-email status (409), pagination
+  (no, ≤ 500), API response time (no new target), cross-cutting 415/503.
+- The Figma design paths in the spec (`./designs/teachers/...`) likewise do not
+  exist; the spec already documented that the Filled State mirrors the Classes
+  Filled State (Assumption in 001-teachers §Assumptions), so no Figma asset is
+  blocking.
+
+**Follow-up (out of this plan's scope)**:
+- A separate cleanup task (not part of 001-teachers implementation) can restore the
+  `.requirements/` directory and the `./designs/` directory if the original files
+  become available. None of the FRs, SCs, or edge cases in this spec depend on those
+  files.
+
+**Alternatives considered**:
+- **Stop and ask the user for the file** — sensible, but the user has been clear
+  in two prior clarification sessions ("do not assume things, you can always clarify
+  with me"); every concrete value the spec could have leaned on the file for is
+  already pinned in the Clarifications. Proceeding.
+- **Reverse-engineer the Figma design from the Add Teacher / Teachers pages
+  described in the spec** — the spec is detailed enough that the forms can be
+  built from the field names, the Filled State description ("mirrors Classes"),
+  and the error-state requirements. No need to wait for the Figma.
+
+---
+
+## 1.7. Next.js + React versions
+
+**Decision**: **`next@^15`** (latest 15.x as of 2026-06-18) paired with
+**`react@^19` and `react-dom@^19`**.
+
+**Rationale**:
+- Next 15 is the current stable line; App Router is the default and required by
+  the Constitution ("Next.js with the **App Router**, using **client components**").
+- Next 15 pairs with React 19 by default; using React 18 is unsupported on
+  Next 15. Pin to React 19 in `package.json`.
+- App Router's client-component model matches the spec's "client-side rendering
+  is the default for this project" assumption.
+- Route Handlers under `app/api/*/route.ts` are the documented way to build the
+  API; no separate Express / Fastify server.
+
+**Alternatives considered**:
+- **Next 14** — would still work, but the user asked for "latest npm libraries".
+  Rejected.
+- **Pages Router** — the legacy model. Rejected because the Constitution specifies
+  App Router.
+- **A separate backend in Express / Fastify / NestJS** — explicitly out of scope
+  per the Constitution ("There is no separate Node.js HTTP service,
+  Express/Fastify/NestJS app, or microservice in scope.").
+
+---
+
+## 1.8. Module system: ESM vs CJS
+
+**Decision**: **TypeScript with the Next.js default** (Next 15 supports both ESM and
+CJS; the default for new Next 15 apps is the Next-native build pipeline, with
+`"type": "module"` in `package.json` and `.mjs` / `.ts` source files).
+
+**Rationale**:
+- The Constitution's Principle II says "no `.js` source files" — the source is
+  `.ts`, the build output is auto-generated.
+- Next 15's default `tsconfig.json` is CommonJS-style on the build side but the
+  authored source is ESM-style (import/export). This is the path of least
+  resistance.
+- typeORM 0.3 ships both CJS and ESM builds; the migration CLI works with the
+  Next 15 build setup out of the box.
+
+**Alternatives considered**:
+- **Full strict ESM** (`"type": "module"` everywhere, no `require`). Rejected
+  because it makes the typeORM migration CLI's `ts-node` runner harder to
+  configure; not worth the friction.
+- **Full CJS** (the legacy pattern). Rejected because Next 15 has moved on.
+
+---
+
+## 1.9. `package.json` version policy (recap)
+
+Per the user's input — "npm libraries should be latest" — the dependency list in
+[plan.md §Technical Context](./plan.md#technical-context) uses caret ranges
+(`^x.y.z`) for every runtime dependency, pinned exactly in `package-lock.json` by
+the first `npm install`. Dev dependencies (`typescript`, `vitest`, `@types/*`)
+follow the same pattern. The exact versions are recorded at install time; the
+plan itself does not pin a specific patch number.
+
+The `package.json` policy is therefore:
+- Runtime deps: caret ranges, locked via `package-lock.json`.
+- Dev deps: caret ranges, locked via `package-lock.json`.
+- Engines: `"node": ">=20.x"` (current Node LTS as of 2026-06-18).

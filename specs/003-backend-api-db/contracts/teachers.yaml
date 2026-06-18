@@ -1,0 +1,188 @@
+openapi: 3.1.0
+info:
+  title: Teachers API
+  version: 0.1.0
+  description: |
+    Public HTTP contract for the Teachers feature (`001-teachers`),
+    as unified by `003-backend-api-db`. This file inherits the
+    cross-cutting components (error envelope, status-code responses)
+    from `./common.yaml` — those are the single source of truth for
+    the cross-cutting contract.
+
+    Stage 1 is Create + Read only. There is no `PUT`, `PATCH`, or
+    `DELETE` endpoint for teachers in scope. Per the requirements
+    file: "POST /api/teachers" + "GET /api/teachers".
+
+    Cross-references:
+      - 003 cross-cutting contract: [./common.yaml](./common.yaml)
+      - 003 spec status-code table:
+        [`../spec.md`](../spec.md) FR-013
+      - 001-teachers spec: [`../001-teachers/spec.md`](../001-teachers/spec.md)
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: teachers
+    description: Teacher registration and lookup (Create + Read)
+
+paths:
+  /api/teachers:
+    get:
+      tags: [teachers]
+      summary: List all teachers
+      description: |
+        Returns the full list of registered teachers. No pagination
+        in Stage 1. Stage 1 upper bound: ≤ 500 teachers (see
+        `001-teachers/spec.md` Clarifications, Session 2026-06-18).
+
+        Response shape per entry:
+        `{ name, subject, email, contactNumber }`.
+      operationId: listTeachers
+      responses:
+        "200":
+          description: Teachers list (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeacherListResponse"
+              examples:
+                empty:
+                  summary: No teachers registered
+                  value: { data: [] }
+                filled:
+                  summary: Two teachers
+                  value:
+                    data:
+                      - { name: "Mary", subject: "Mathematics", email: "teachermary@gmail.com", contactNumber: "68129414" }
+                      - { name: "Ken",  subject: "Mother Tongue Language", email: "teacherken@gmail.com", contactNumber: "61824191" }
+        "415":
+          $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "./common.yaml#/components/responses/InternalServerError"
+        "503":
+          $ref: "./common.yaml#/components/responses/ServiceUnavailable"
+
+    post:
+      tags: [teachers]
+      summary: Create a new teacher
+      description: |
+        Validates the request body with Joi against the active
+        `subjects` list (see `lib/validation/teacher.ts`) and inserts
+        the row. Race-safe via `UNIQUE(teachers.email)`.
+
+        The `subject` field must match an active entry in the
+        `subjects` reference list; unknown / inactive values are
+        rejected with `400 Bad Request` + `{ "error": "Invalid
+        subject" }` per `003-backend-api-db/spec.md` FR-013.
+      operationId: createTeacher
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeacherRequest"
+            examples:
+              valid:
+                value:
+                  name: "Mary"
+                  subject: "Mathematics"
+                  email: "teachermary@gmail.com"
+                  contactNumber: "68129414"
+      responses:
+        "201":
+          description: Teacher created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Teacher"
+              example:
+                name: "Mary"
+                subject: "Mathematics"
+                email: "teachermary@gmail.com"
+                contactNumber: "68129414"
+        "400":
+          $ref: "./common.yaml#/components/responses/BadRequest"
+        "409":
+          description: |
+            Duplicate teacher email (`UNIQUE(teachers.email)`
+            violation). Per `003-backend-api-db/spec.md` FR-013.
+          content:
+            application/json:
+              schema:
+                $ref: "./common.yaml#/components/schemas/ErrorResponse"
+              example: { error: "Email already in use" }
+        "415":
+          $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "./common.yaml#/components/responses/InternalServerError"
+        "503":
+          $ref: "./common.yaml#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Teacher:
+      type: object
+      description: |
+        Stage 1 wire shape of a teacher. There is no `id` column on
+        the `teachers` table — `email` is the natural identifier.
+      required: [name, subject, email, contactNumber]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            Active entry from the `subjects` reference list
+            (e.g., "Mathematics").
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: |
+            The teacher's email; unique across all teachers.
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+          description: |
+            8 digits, must start with `8` or `9` (Singapore mobile).
+            The regex is the single source of truth (matches
+            `001-teachers/spec.md` Clarifications, Session 2026-06-18).
+
+    CreateTeacherRequest:
+      type: object
+      required: [name, subject, email, contactNumber]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            Must match an active entry in the `subjects` reference
+            list. The Joi schema is generated from the active subjects
+            at app boot.
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+
+    TeacherListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Teacher"

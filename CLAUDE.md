@@ -63,6 +63,19 @@ There is no application code, no `package.json`, no test runner, and no linter c
 To run an individual Spec Kit step, invoke the corresponding Claude Code skill (`/speckit-plan`, `/speckit-tasks`, etc.) rather than the scripts directly — the skills enforce the SDD gates.
 
 <!-- SPECKIT START -->
+# Active feature: 003-backend-api-db
+
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read the current plan:
+
+- Plan: `specs/003-backend-api-db/plan.md`
+- Research: `specs/003-backend-api-db/research.md`
+- Data model: `specs/003-backend-api-db/data-model.md`
+- Quickstart: `specs/003-backend-api-db/quickstart.md`
+- Contracts: `specs/003-backend-api-db/contracts/common.yaml`, `specs/003-backend-api-db/contracts/teachers.yaml`, `specs/003-backend-api-db/contracts/classes.yaml`, `specs/003-backend-api-db/contracts/subjects.yaml`, `specs/003-backend-api-db/contracts/levels.yaml`
+
+Related specs:
+- `specs/003-backend-api-db/spec.md` (this feature — cross-cutting contract owner: error envelope, status-code table, migration-set ordering, reference-list seed pattern)
+- `specs/001-teachers/spec.md` (dependency: 003 owns the cross-cutting contract that 001's POST/GET /api/teachers + GET /api/subjects conform to; 001 owns the `teachers` and `subjects` schema and migrations)
+- `specs/002-classes/spec.md` (dependency: 003 owns the cross-cutting contract that 002's POST/GET /api/classes + GET /api/levels conform to; 002 owns the `classes` and `levels` schema and migrations)
 <!-- SPECKIT END -->

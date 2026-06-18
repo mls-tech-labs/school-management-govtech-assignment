@@ -1,0 +1,206 @@
+openapi: 3.1.0
+info:
+  title: Teachers API
+  version: 0.1.0
+  description: |
+    Public HTTP contract for the Teachers feature (`001-teachers`).
+    Part of Stage 1 — Create + Read only.
+    Cross-cutting contract details (status-code table, error envelope,
+    415 / 503 behaviour) are defined in `003-backend-api-db/spec.md` and
+    inherited here by reference.
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: teachers
+    description: Teacher registration and lookup
+
+paths:
+  /api/teachers:
+    get:
+      tags: [teachers]
+      summary: List all teachers
+      description: |
+        Returns the full list of registered teachers. No pagination in
+        Stage 1. Stage 1 upper bound: ≤ 500 teachers
+        (see `001-teachers/spec.md` Clarifications, Session 2026-06-18).
+      operationId: listTeachers
+      responses:
+        "200":
+          description: Teachers list (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeacherListResponse"
+              examples:
+                empty:
+                  summary: No teachers registered
+                  value: { "data": [] }
+                filled:
+                  summary: Two teachers
+                  value:
+                    data:
+                      - { name: "Alice Tan",   subject: "Mathematics", email: "alice@example.com",   contactNumber: "91234567" }
+                      - { name: "Bobby Lim",   subject: "Science",     email: "bobby@example.com",   contactNumber: "98765432" }
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    post:
+      tags: [teachers]
+      summary: Create a new teacher
+      description: |
+        Validates the request body with Joi, checks the subject against
+        the active `subjects` list, inserts a `teachers` row, and returns
+        201 on success. Duplicate email is rejected with 409 (race-safe
+        via the `UNIQUE` constraint on `teachers.email`).
+      operationId: createTeacher
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeacherRequest"
+            examples:
+              valid:
+                value:
+                  name: "Alice Tan"
+                  subject: "Mathematics"
+                  email: "alice@example.com"
+                  contactNumber: "91234567"
+      responses:
+        "201":
+          description: Teacher created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Teacher"
+        "400":
+          description: Validation error (bad email, bad contact number, missing field, unknown/inactive subject)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidEmail:
+                  value: { "error": "email must be a valid email" }
+                invalidContact:
+                  value: { "error": "contactNumber must match pattern \"^[89]\\d{7}$\"" }
+                unknownSubject:
+                  value: { "error": "subject must be one of [English, Mathematics, Science, ...]" }
+        "409":
+          description: Duplicate email (UNIQUE constraint violation)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                duplicate:
+                  value: { "error": "Email already in use" }
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Teacher:
+      type: object
+      required: [name, subject, email, contactNumber]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Must match an active entry in the `subjects` reference list.
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+          example: "91234567"
+          description: 8 digits, starts with 8 or 9 (Singapore mobile).
+
+    CreateTeacherRequest:
+      type: object
+      required: [name, subject, email, contactNumber]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 64
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+
+    TeacherListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Teacher"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            A meaningful error message for the administrator or the calling
+            code. MUST NOT leak internal details (stack traces, connection
+            strings, file paths, raw SQL) — see `001-teachers/spec.md`
+            FR-015 (cross-cutting).
+
+  responses:
+    UnsupportedMediaType:
+      description: |
+        `Content-Type` is not `application/json`. See
+        `003-backend-api-db/spec.md` FR-010.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Content-Type must be application/json" }
+
+    InternalServerError:
+      description: Unhandled server-side failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Internal server error" }
+
+    ServiceUnavailable:
+      description: |
+        The data store is briefly unreachable. See
+        `003-backend-api-db/spec.md` FR-013. The write MUST NOT be
+        partially applied.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Service temporarily unavailable, please retry" }

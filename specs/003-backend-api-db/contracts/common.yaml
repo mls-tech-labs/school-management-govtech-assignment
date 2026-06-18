@@ -1,0 +1,179 @@
+openapi: 3.1.0
+info:
+  title: Cross-Cutting API Contract
+  version: 0.1.0
+  description: |
+    **Cross-cutting API contract for Stage 1.**
+
+    This file is the **single source of truth** for the HTTP
+    conventions shared by every endpoint in `001-teachers`,
+    `002-classes`, and `003-backend-api-db`. The per-feature contracts
+    (`teachers.yaml`, `classes.yaml`, `subjects.yaml`, `levels.yaml`)
+    live alongside this file and reference its shared components.
+
+    The error envelope (`{ "error": "..." }`), the status-code table
+    (400 / 404 / 409 / 415 / 500 / 503), and the content-type gate
+    (`Content-Type: application/json`) are defined here once and
+    inherited by every endpoint. Per the
+    [`003-backend-api-db/spec.md`](../spec.md) Clarifications,
+    Session 2026-06-18 (Q3), any change to the status-code table or
+    the error envelope is an amendment to the 003 spec.
+
+    See [spec.md FR-010..FR-015](../spec.md) for the canonical text.
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+paths: {}
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      description: |
+        The single error envelope used by every endpoint. Per
+        `003-backend-api-db/spec.md` FR-012: every error response MUST
+        use this shape. The `error` string is a meaningful message for
+        the administrator or the calling code; it MUST NOT leak stack
+        traces, connection strings, file paths, or raw SQL (FR-015).
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            A meaningful error message. Concrete examples by status
+            code:
+              - 400: `"name is required"`, `"email must be a valid email"`,
+                `"Invalid subject"`, `"Invalid level"`
+              - 404: `"Teacher not found"`
+              - 409: `"Email already in use"`,
+                `"Class name already in use"`,
+                `"Teacher already assigned"`
+              - 415: `"Content-Type must be application/json"`
+              - 500: `"Internal server error"`
+              - 503: `"Service temporarily unavailable, please retry"`
+
+    DataListResponseOfTeacher:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "./teachers.yaml#/components/schemas/Teacher"
+
+    DataListResponseOfClass:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "./classes.yaml#/components/schemas/Class"
+
+    DataListResponseOfSubject:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "./subjects.yaml#/components/schemas/Subject"
+
+    DataListResponseOfLevel:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "./levels.yaml#/components/schemas/Level"
+
+  responses:
+    BadRequest:
+      description: |
+        Request body is missing, malformed, fails field-level
+        validation, references an unknown / inactive `subject`
+        (POST /api/teachers), or references an unknown / inactive
+        `level` (POST /api/classes). Per
+        `003-backend-api-db/spec.md` FR-013.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missingField:
+              summary: Required field missing
+              value: { error: "name is required" }
+            invalidFormat:
+              summary: Field format invalid
+              value: { error: "email must be a valid email" }
+            invalidReference:
+              summary: Reference list value invalid
+              value: { error: "Invalid subject" }
+
+    NotFound:
+      description: |
+        A referenced resource does not exist. In Stage 1, the only
+        404 path is `POST /api/classes` with a `teacherEmail` that
+        does not match any registered teacher. Per
+        `003-backend-api-db/spec.md` FR-013.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { error: "Teacher not found" }
+
+    Conflict:
+      description: |
+        A uniqueness or referential-integrity rule was violated. Per
+        `003-backend-api-db/spec.md` FR-013. Three distinct cases:
+        duplicate teacher email (`POST /api/teachers`),
+        duplicate class `(name)` or duplicate form teacher
+        (`POST /api/classes`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            duplicateEmail:
+              value: { error: "Email already in use" }
+            duplicateClassName:
+              value: { error: "Class name already in use" }
+            duplicateFormTeacher:
+              value: { error: "Teacher already assigned" }
+
+    UnsupportedMediaType:
+      description: |
+        The request `Content-Type` is not `application/json`. Per
+        `003-backend-api-db/spec.md` FR-010. Enforced by the
+        `withApiContract()` route-handler wrapper *before* the body
+        is read.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { error: "Content-Type must be application/json" }
+
+    InternalServerError:
+      description: |
+        An unhandled server-side failure. Per
+        `003-backend-api-db/spec.md` FR-013. The handler's stack
+        trace is logged but never sent to the client (FR-015).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { error: "Internal server error" }
+
+    ServiceUnavailable:
+      description: |
+        The data store is briefly unreachable. Per
+        `003-backend-api-db/spec.md` FR-013. Writes that fail with
+        503 MUST NOT leave partial data in the store (FR-014). The
+        UI surfaces a retry-friendly message to the administrator.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { error: "Service temporarily unavailable, please retry" }

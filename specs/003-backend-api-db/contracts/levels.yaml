@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: Levels API
+  version: 0.1.0
+  description: |
+    Public HTTP contract for the `levels` reference list. The list
+    is read-only in Stage 1 (no POST / PUT / DELETE); the data is
+    seeded by the fourth migration
+    `1700000000003-SeedLevels.ts` (per
+    `003-backend-api-db/spec.md` FR-017) and surfaced as a dropdown
+    on the Add Class form. See `003-backend-api-db/spec.md` FR-009c.
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: levels
+    description: Levels reference list (read-only)
+
+paths:
+  /api/levels:
+    get:
+      tags: [levels]
+      summary: List active levels
+      description: |
+        Returns the entries from the `levels` table where
+        `active = true`. The Stage 1 seed list is the only data
+        source; admin authoring is out of scope (see
+        `003-backend-api-db/spec.md` Assumptions).
+      operationId: listActiveLevels
+      responses:
+        "200":
+          description: Active levels list (may be empty if the seed migration has not run)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LevelListResponse"
+              examples:
+                seeded:
+                  value:
+                    data:
+                      - { name: "Primary 1",   active: true }
+                      - { name: "Primary 2",   active: true }
+                      - { name: "Primary 3",   active: true }
+                      - { name: "Primary 4",   active: true }
+                      - { name: "Primary 5",   active: true }
+                      - { name: "Primary 6",   active: true }
+                      - { name: "Secondary 1", active: true }
+                      - { name: "Secondary 2", active: true }
+                      - { name: "Secondary 3", active: true }
+                      - { name: "Secondary 4", active: true }
+                empty:
+                  summary: Seed not yet applied
+                  value: { data: [] }
+        "415":
+          $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "./common.yaml#/components/responses/InternalServerError"
+        "503":
+          $ref: "./common.yaml#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Level:
+      type: object
+      required: [name, active]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            Display name of the level as it appears in the Add Class
+            dropdown (e.g., "Primary 1", "Secondary 4").
+        active:
+          type: boolean
+          description: |
+            Whether the level is currently selectable. Stage 1 always
+            reads `WHERE active = true`.
+
+    LevelListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Level"

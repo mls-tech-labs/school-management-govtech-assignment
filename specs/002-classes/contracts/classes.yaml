@@ -1,0 +1,254 @@
+openapi: 3.1.0
+info:
+  title: Classes API
+  version: 0.1.0
+  description: |
+    Public HTTP contract for the Classes feature (`002-classes`).
+    Part of Stage 1 — Create + Read only.
+
+    The Classes feature consumes the `teachers` reference via the
+    `teacherEmail` request field (the form teacher's email). It is built
+    on top of `001-teachers` (the `teachers` table must exist) and the
+    shared cross-cutting contract defined in `003-backend-api-db/spec.md`
+    (status codes, error envelope, 415 / 503 behaviour, idempotent
+    migrations).
+
+    Stage 1 deliberately does NOT expose the `id` column (the surrogate
+    primary key is reserved for a future edit/delete endpoint); see
+    `002-classes/spec.md` Clarifications, Session 2026-06-18 (Q5).
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: classes
+    description: Class registration and lookup (Create + Read)
+
+paths:
+  /api/classes:
+    get:
+      tags: [classes]
+      summary: List all classes
+      description: |
+        Returns the full list of registered classes, joined with the
+        form-teacher's `name`. No pagination in Stage 1. Stage 1 upper
+        bound: ≤ 500 classes
+        (see `002-classes/spec.md` Clarifications, Session 2026-06-18).
+
+        Response shape per entry:
+        `{ "level": string, "name": string, "formTeacher": { "name": string } }`.
+        The `id` column is intentionally **not** in the response.
+      operationId: listClasses
+      responses:
+        "200":
+          description: Classes list (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassListResponse"
+              examples:
+                empty:
+                  summary: No classes registered
+                  value: { "data": [] }
+                filled:
+                  summary: Two classes
+                  value:
+                    data:
+                      - { level: "Primary 1",   name: "Class 1A", formTeacher: { name: "Alice Tan" } }
+                      - { level: "Primary 1",   name: "Class 1B", formTeacher: { name: "Bobby Lim" } }
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    post:
+      tags: [classes]
+      summary: Create a new class
+      description: |
+        Validates the request body with Joi against the active `levels`
+        list and the standard email format. Performs a pre-INSERT
+        existence check against the `teachers` table to distinguish
+        `404 "Teacher not found"` from `409 "Teacher already assigned"`,
+        then inserts the row. Race-safe via the `UNIQUE` indexes on
+        `classes.name` and `classes.form_teacher_email`.
+      operationId: createClass
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClassRequest"
+            examples:
+              valid:
+                value:
+                  level: "Primary 1"
+                  name: "Class 1A"
+                  teacherEmail: "alice@example.com"
+      responses:
+        "201":
+          description: Class created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+              example:
+                level: "Primary 1"
+                name: "Class 1A"
+                formTeacher: { name: "Alice Tan" }
+        "400":
+          description: |
+            Validation error (missing field, invalid email format,
+            unknown/inactive `level`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingName:
+                  value: { "error": "name is required" }
+                invalidEmail:
+                  value: { "error": "teacherEmail must be a valid email" }
+                unknownLevel:
+                  value: { "error": "level must be one of [Primary 1, Primary 2, ..., Secondary 4]" }
+        "404":
+          description: |
+            `teacherEmail` does not match any registered teacher
+            (covers the race where a teacher is deleted between page load
+            and submit — see `002-classes/spec.md` Clarifications,
+            Session 2026-06-18, Q2).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                teacherNotFound:
+                  value: { "error": "Teacher not found" }
+        "409":
+          description: |
+            Either the class `name` is already in use
+            (`UNIQUE(classes.name)` violation) or the teacher identified
+            by `teacherEmail` is already the form teacher of another
+            class (`UNIQUE(classes.form_teacher_email)` violation). Both
+            are race-safe by construction.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                duplicateName:
+                  value: { "error": "Class name already in use" }
+                teacherAlreadyAssigned:
+                  value: { "error": "Teacher already assigned" }
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Class:
+      type: object
+      description: |
+        The Stage 1 wire shape of a class. The surrogate `id` column is
+        deliberately omitted; it lives in the DB but is not returned to
+        the client.
+      required: [level, name, formTeacher]
+      properties:
+        level:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Active entry from the `levels` reference list (e.g., "Primary 1").
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Class display name (e.g., "Class 1A"). Globally unique.
+        formTeacher:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+              description: Form teacher's display name, resolved server-side via the JOIN against `teachers`.
+
+    CreateClassRequest:
+      type: object
+      required: [level, name, teacherEmail]
+      additionalProperties: false
+      properties:
+        level:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Must match an active entry in the `levels` reference list.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        teacherEmail:
+          type: string
+          format: email
+          maxLength: 254
+          description: |
+            The form teacher's email. Must match an existing teacher. The
+            dropdown on the Add Class form submits the selected
+            teacher's email here (see `002-classes/spec.md`
+            Clarifications, Session 2026-06-18, Q2).
+
+    ClassListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Class"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            A meaningful error message for the administrator or the
+            calling code. MUST NOT leak internal details (stack traces,
+            connection strings, file paths, raw SQL) — see
+            `003-backend-api-db/spec.md` FR-015 (cross-cutting).
+
+  responses:
+    UnsupportedMediaType:
+      description: |
+        `Content-Type` is not `application/json`. See
+        `003-backend-api-db/spec.md` FR-010.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Content-Type must be application/json" }
+
+    InternalServerError:
+      description: Unhandled server-side failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Internal server error" }
+
+    ServiceUnavailable:
+      description: |
+        The data store is briefly unreachable. See
+        `003-backend-api-db/spec.md` FR-013. The write MUST NOT be
+        partially applied.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Service temporarily unavailable, please retry" }

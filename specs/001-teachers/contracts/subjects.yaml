@@ -1,0 +1,103 @@
+openapi: 3.1.0
+info:
+  title: Subjects API
+  version: 0.1.0
+  description: |
+    Public HTTP contract for the `subjects` reference list. The list is
+    read-only in Stage 1 (no POST / PUT / DELETE); the data is seeded by
+    a typeORM migration and surfaced as a dropdown on the Add Teacher
+    form. See `001-teachers/spec.md` FR-005a and `003-backend-api-db`
+    FR-009c.
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: subjects
+    description: Subjects reference list (read-only)
+
+paths:
+  /api/subjects:
+    get:
+      tags: [subjects]
+      summary: List active subjects
+      description: |
+        Returns the entries from the `subjects` table where
+        `active = true`. The Stage 1 seed list is the only data
+        source; admin authoring is out of scope.
+      operationId: listActiveSubjects
+      responses:
+        "200":
+          description: Active subjects list (may be empty if the seed migration has not run)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubjectListResponse"
+              examples:
+                seeded:
+                  value:
+                    data:
+                      - { name: "English",          active: true }
+                      - { name: "Mathematics",      active: true }
+                      - { name: "Science",          active: true }
+                      - { name: "Chinese",          active: true }
+                      - { name: "Malay",            active: true }
+                      - { name: "Tamil",            active: true }
+                      - { name: "Art",              active: true }
+                      - { name: "Music",            active: true }
+                      - { name: "Physical Education", active: true }
+                empty:
+                  summary: Seed not yet applied
+                  value: { "data": [] }
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Subject:
+      type: object
+      required: [name, active]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Display name of the subject (e.g., "Mathematics").
+        active:
+          type: boolean
+          description: Whether the subject is currently selectable.
+
+    SubjectListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Subject"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+  responses:
+    InternalServerError:
+      description: Unhandled server-side failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Internal server error" }
+
+    ServiceUnavailable:
+      description: The data store is briefly unreachable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example: { "error": "Service temporarily unavailable, please retry" }

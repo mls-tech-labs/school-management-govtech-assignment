@@ -1,0 +1,203 @@
+openapi: 3.1.0
+info:
+  title: Classes API
+  version: 0.1.0
+  description: |
+    Public HTTP contract for the Classes feature (`002-classes`),
+    as unified by `003-backend-api-db`. This file inherits the
+    cross-cutting components (error envelope, status-code responses)
+    from `./common.yaml` — those are the single source of truth for
+    the cross-cutting contract.
+
+    Stage 1 is Create + Read only. There is no `PUT`, `PATCH`, or
+    `DELETE` endpoint for classes in scope. Per the requirements
+    file: "POST /api/classes" + "GET /api/classes".
+
+    The form-teacher relationship is enforced at the data layer by
+    `UNIQUE(classes.form_teacher_email)` and
+    `FK(classes.form_teacher_email → teachers.email)`. See
+    [`./data-model.md`](../data-model.md) §2.
+
+    Cross-references:
+      - 003 cross-cutting contract: [./common.yaml](./common.yaml)
+      - 003 spec status-code table:
+        [`../spec.md`](../spec.md) FR-013
+      - 002-classes spec: [`../002-classes/spec.md`](../002-classes/spec.md)
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: classes
+    description: Class registration and lookup (Create + Read)
+
+paths:
+  /api/classes:
+    get:
+      tags: [classes]
+      summary: List all classes
+      description: |
+        Returns the full list of registered classes, joined with the
+        form-teacher's `name`. No pagination in Stage 1. Stage 1
+        upper bound: ≤ 500 classes (see `002-classes/spec.md`
+        Clarifications, Session 2026-06-18).
+
+        Response shape per entry:
+        `{ level, name, formTeacher: { name } }`. The surrogate
+        `id` column is **not** in the response.
+      operationId: listClasses
+      responses:
+        "200":
+          description: Classes list (may be empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassListResponse"
+              examples:
+                empty:
+                  summary: No classes registered
+                  value: { data: [] }
+                filled:
+                  summary: Two classes
+                  value:
+                    data:
+                      - { level: "Primary 1", name: "Class 1A", formTeacher: { name: "Alice Tan" } }
+                      - { level: "Primary 2", name: "Class 2B", formTeacher: { name: "Bobby Lim" } }
+        "415":
+          $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "./common.yaml#/components/responses/InternalServerError"
+        "503":
+          $ref: "./common.yaml#/components/responses/ServiceUnavailable"
+
+    post:
+      tags: [classes]
+      summary: Create a new class
+      description: |
+        Validates the request body with Joi against the active
+        `levels` list. Performs a pre-INSERT existence check against
+        the `teachers` table to distinguish `404 "Teacher not found"`
+        from `409 "Teacher already assigned"`, then inserts the row.
+        Race-safe via the `UNIQUE` indexes on `classes.name` and
+        `classes.form_teacher_email`.
+
+        The `level` field must match an active entry in the `levels`
+        reference list; unknown / inactive values are rejected with
+        `400 Bad Request` + `{ "error": "Invalid level" }` per
+        `003-backend-api-db/spec.md` FR-013.
+      operationId: createClass
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClassRequest"
+            examples:
+              valid:
+                value:
+                  level: "Primary 1"
+                  name: "Class 1A"
+                  teacherEmail: "alice@example.com"
+      responses:
+        "201":
+          description: Class created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+              example:
+                level: "Primary 1"
+                name: "Class 1A"
+                formTeacher: { name: "Alice Tan" }
+        "400":
+          $ref: "./common.yaml#/components/responses/BadRequest"
+        "404":
+          $ref: "./common.yaml#/components/responses/NotFound"
+        "409":
+          description: |
+            Either the class `name` is already in use
+            (`UNIQUE(classes.name)`) or the teacher identified by
+            `teacherEmail` is already the form teacher of another
+            class (`UNIQUE(classes.form_teacher_email)`). Per
+            `003-backend-api-db/spec.md` FR-013. Race-safe by
+            construction.
+          content:
+            application/json:
+              schema:
+                $ref: "./common.yaml#/components/schemas/ErrorResponse"
+              examples:
+                duplicateName:
+                  value: { error: "Class name already in use" }
+                teacherAlreadyAssigned:
+                  value: { error: "Teacher already assigned" }
+        "415":
+          $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "./common.yaml#/components/responses/InternalServerError"
+        "503":
+          $ref: "./common.yaml#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Class:
+      type: object
+      description: |
+        Stage 1 wire shape of a class. The surrogate `id` column is
+        deliberately omitted; it lives in the DB but is not returned
+        to the client. Per `002-classes/spec.md` Clarifications,
+        Session 2026-06-18 (Q5).
+      required: [level, name, formTeacher]
+      properties:
+        level:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Active entry from the `levels` reference list (e.g., "Primary 1").
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Class display name (e.g., "Class 1A"). Globally unique.
+        formTeacher:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+              description: |
+                Form teacher's display name, resolved server-side via
+                the JOIN against `teachers`. The `teacherEmail` is
+                not in the response — only the name.
+
+    CreateClassRequest:
+      type: object
+      required: [level, name, teacherEmail]
+      additionalProperties: false
+      properties:
+        level:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: |
+            Must match an active entry in the `levels` reference list.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        teacherEmail:
+          type: string
+          format: email
+          maxLength: 254
+          description: |
+            The form teacher's email. Must match an existing teacher.
+
+    ClassListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Class"
