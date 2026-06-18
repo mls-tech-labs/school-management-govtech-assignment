@@ -1,70 +1,83 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.0.0 → 2.1.0  [MINOR: new principle + material constraint change]
+Version change: 2.1.0 → 2.2.0  [MINOR: two new principles + new Stage Scope section]
 
-Modified principles:
-  II. TypeScript End-to-End  →  II. TypeScript End-to-End (architecture
-      collapsed to a single Next.js app; the "shared tsconfig across the
-      Next.js app and the Node.js service" wording is updated to a
-      single tsconfig covering UI and API routes.)
-  (other principles unchanged)
+Modified principles: none (Principles I–VI are unchanged in title and intent;
+                     wording in Technical Stack Constraints and Secrets is
+                     clarified, see "Modified sections" below).
 
 Added principles:
-  VI. Functional-First (Classes Only When Necessary)
-      Functional programming is the default style: pure functions,
-      immutable data, explicit composition. Classes are used only when
-      a framework or library requires them or when no reasonable
-      functional alternative exists. New principle → MINOR.
+  VII. Joi Schema Validation (input + DB column alignment)
+       Joi MUST validate every API request body, query parameter, and
+       server-trusted form submission that crosses a trust boundary.
+       The Joi schema for each entity MUST mirror the typeORM entity
+       columns so the same field-level constraints (required-ness,
+       length, type, format) appear in both validation and persistence.
+       New principle → MINOR.
 
-Added sections: none
-Removed sections: none
+  VIII. UI Quality — Self-Explanatory, Reusable, Simple
+       Every UI component MUST be self-explanatory (clear name,
+       explicit props, no hidden coupling), reusable (no feature-
+       specific hard-coding; composed from generic primitives), and
+       as simple as the requirement allows. New principle → MINOR.
+
+Added sections:
+  Stage Scope
+    Captures the currently in-scope features (Stage 1 = Teachers UI
+    Create+Read, Classes UI Create+Read, and their backend APIs) so
+    any feature spec that goes outside it requires an explicit
+    amendment.
 
 Modified sections (non-principle):
   Technical Stack Constraints
-    - "Singapore Government Design System (SGDS)"  →
-      "Singapore Government Design System **v3** (SGDS v3)" (PATCH
-      clarification; pin the version the project standardizes on).
-    - "Backend HTTP layer: a TypeScript HTTP framework selected per
-      feature in plan.md → Technical Context (Express, Fastify, NestJS,
-      or equivalent)"  →
-      "**Next.js Route Handlers** under `app/api/` (App Router). The
-      API and the UI live in a single Next.js application; there is no
-      separate Node.js HTTP service." This is a material constraint
-      change — the per-feature choice deferral is removed.
-    - "Backend runtime: Node.js LTS" is kept (Next.js still runs on
-      Node.js LTS) and rewritten as a property of the single Next.js
-      app rather than a separate service.
+    - "the application MUST run in a Docker container" →
+      "the application MUST run in a Docker container, and the
+      MySQL database MUST also run in a Docker container." PATCH
+      clarification: pins MySQL's runtime as Docker per the user's
+      stated environment.
+    - Secrets:
+        "Local secrets go in `.env.local` (gitignored) or are passed
+        at container run time. The repo-level `.env` is JSON and holds
+        model configuration only — see `CLAUDE.md` → Environment." →
+        "Runtime application configuration (database URL, server
+        port, feature flags, etc.) is provided via the `.env` file
+        loaded by Next.js / the runtime (standard dotenv format).
+        Secrets that MUST NOT be committed (passwords, API keys) live
+        in `.env.local` (gitignored) or are passed at container run
+        time. The repo-level `.env` that is JSON and holds model
+        configuration only — see `CLAUDE.md` → Environment — is a
+        separate concern and MUST NOT be used for application
+        runtime config." PATCH clarification: separates the
+        application's dotenv `.env` from the JSON `.env` consumed
+        by the coding-agent harness, and aligns the document with
+        the user's "all the configurations are provided via .env
+        file" statement.
 
 Templates requiring updates:
-  - .specify/templates/plan-template.md     ✅ no change (Constitution Check is generic;
-                                                per-feature plan will use "single project"
-                                                layout from the plan template's Option 1)
+  - .specify/templates/plan-template.md     ✅ no change
   - .specify/templates/spec-template.md      ✅ no change
   - .specify/templates/tasks-template.md     ✅ no change
   - .specify/templates/checklist-template.md ✅ no change
   - .specify/templates/commands/*.md         ✅ none present
 
 Follow-up TODOs:
-  - TODO(FEATURE_001): in plan.md → Project Structure, pick the
-    "single project" layout from .specify/templates/plan-template.md
-    (Option 1) since the app is no longer split into frontend and
-    backend services. Place API route handlers under app/api/ and
-    colocate unit tests.
   - TODO(FEATURE_001): in plan.md → Technical Context, decide the
-    unit-test runner (Vitest vs Jest). Principle III no longer fixes
+    unit-test runner (Vitest vs Jest). Principle III does not fix
     the ordering but still requires the runner decision here.
   - TODO(FEATURE_001): in plan.md → Technical Context, decide the
     container layout (single multi-stage Dockerfile vs docker-compose
-    with a MySQL service). The previous amendment flagged this; it
-    remains a per-feature decision.
+    with a MySQL service).
   - TODO(SGDS_V3_PACKAGE): pin the @govtechsg/sgds-react (or
     equivalent) package version in the first frontend plan so the
     constitution's "v3" requirement is reflected in package.json.
+  - TODO(JOI_ALIGNMENT): on the first PR that adds a typeORM
+    entity, verify a matching Joi schema exists with identical
+    field-level constraints (required-ness, length, regex, format).
   - TODO(FUNCTIONAL_REVIEW): on first PR, verify no class-based
     service / controller / domain-model code is introduced; the only
-    allowed classes are framework-mandated (typeORM entities, error
-    subclasses where appropriate).
+    allowed classes are framework-mandated (typeORM entities, Joi
+    schema helpers where required, error subclasses where appropriate).
 -->
 
 # pvt-edu-admin-project Constitution
@@ -150,6 +163,89 @@ exists. Introducing a class for any other reason requires justification in
 out naturally), easier to reason about, and aligns with the interview-prep
 goal of demonstrating clarity of intent.
 
+### VII. Joi Schema Validation
+
+**Joi MUST validate every payload that crosses a trust boundary** —
+in particular, every Next.js Route Handler request body and every
+query/path parameter consumed by an API. Validation MUST run before
+any business logic, typeORM call, or persistence write. Validation
+errors MUST be returned to the client with HTTP `400 Bad Request` and
+a structured `{ error, details }` payload; they MUST NOT leak
+internal messages, stack traces, or database column names.
+
+The Joi schema for an entity MUST mirror the typeORM entity columns
+field-for-field: same required-ness, same length bounds, same string
+format / regex, same numeric range. Where a constraint is awkward to
+express in typeORM decorators (e.g. cross-field rules), the Joi
+schema is the source of truth and the typeORM column is the relaxed
+default — but the mismatch MUST be documented in `plan.md`.
+
+Joi schemas live in plain `.ts` modules (functional: exported factory
+functions or const schemas), not in classes. They are unit-tested
+(Principle III): at least one test per schema covers the happy path
+and one test per constraint covers the rejection path.
+
+**Rationale:** Manual, ad-hoc validation drifts away from the
+typeORM columns and silently lets malformed data into MySQL.
+Joi-as-source-of-truth gives the app one declarative contract
+that is easy to unit test, hard to bypass, and explicitly
+defends the database boundary — which is the security property
+the project asked for.
+
+### VIII. UI Quality — Self-Explanatory, Reusable, Simple
+
+Every UI component — page, section, form control, table, button — MUST
+satisfy three properties:
+
+1. **Self-explanatory.** Clear, domain-meaningful name; explicit, typed
+   props with no hidden coupling to global state or ambient config;
+   one obvious place to look for its behaviour. Props MUST be
+   documented (TSDoc or equivalent) when their meaning is not obvious
+   from the type alone.
+2. **Reusable.** No feature-specific hard-coding (no `Teacher` field
+   names baked into a "Form" component). Composed from generic SGDS
+   v3 primitives and shared form/table helpers rather than re-
+   implementing them per page.
+3. **Simple.** No abstractions ahead of the current requirement
+   (Principle V applies here too). If a component needs three layers
+   of indirection to render one button, it is the wrong component.
+
+UI work is reviewed against these three properties in addition to
+the standard Spec-Driven gates.
+
+**Rationale:** Self-explanatory + reusable + simple components are
+the difference between an admin tool a single developer can read
+end-to-end and one that requires tribal knowledge to extend. The
+project's interview-prep goal is to demonstrate that clarity, not
+to demonstrate framework acrobatics.
+
+## Stage Scope
+
+This section pins what the current constitution actually authorises.
+A feature spec that exceeds this scope MUST first amend this section
+(or amend Principle IV, Principle V, etc., as relevant).
+
+**Stage 1 — In Scope:**
+
+- **Teachers UI**: Create and Read operations only.
+- **Classes UI**: Create and Read operations only.
+- **Backend APIs**: the corresponding `POST` and `GET` endpoints for
+  Teachers and Classes, exposed as Next.js Route Handlers under
+  `app/api/`, validated by Joi (Principle VII) and persisted via
+  typeORM (Technical Stack Constraints).
+- **Data model**: the MySQL tables backing Teachers and Classes, as
+  defined in `specs/003-backend-api-db/spec.md` and locked into
+  typeORM entities with matching Joi schemas.
+
+**Stage 1 — Explicitly Out of Scope** (requires a constitutional
+amendment to enter scope):
+
+- Update and Delete operations on Teachers / Classes.
+- Authentication, authorization, sessions, or any non-administrator
+  role (see Principle IV).
+- New entities beyond Teachers and Classes.
+- Production deployment, observability, or non-MySQL storage.
+
 ## Technical Stack Constraints
 
 - **Language**: TypeScript with `strict: true`. No `.js` source files.
@@ -158,9 +254,10 @@ goal of demonstrating clarity of intent.
   and the API lives under `app/api/` as **Next.js Route Handlers**. There
   is no separate Node.js HTTP service, Express/Fastify/NestJS app, or
   microservice in scope.
-- **Database**: MySQL (RDBMS). All persistence MUST go through **typeORM**
-  entities, repositories, and migrations. Raw SQL is permitted only inside
-  typeORM migrations or query builders, not in business code.
+- **Database**: **MySQL** (RDBMS), running in a **Docker container**.
+  All persistence MUST go through **typeORM** entities, repositories,
+  and migrations. Raw SQL is permitted only inside typeORM migrations
+  or query builders, not in business code.
 - **Frontend**: **Next.js** with the **App Router**, using **client
   components** (client-side rendering is the default for this project).
 - **UI components**: the **Singapore Government Design System v3 (SGDS v3)**
@@ -169,14 +266,23 @@ goal of demonstrating clarity of intent.
   entry. The exact `@govtechsg/sgds-react` (or equivalent) package version
   is pinned in `package.json` at the first frontend task — see TODO in the
   Sync Impact Report.
-- **Delivery**: the application MUST run in a **Docker** container. The
-  container layout (single multi-stage image, or `docker-compose` with a
-  MySQL service) is decided per feature in `plan.md`.
+- **Validation**: **Joi** schemas (Principle VII), aligned field-for-field
+  with the typeORM entity columns.
+- **Delivery**: the application MUST run in a **Docker** container, and
+  the MySQL database MUST also run in a Docker container. The container
+  layout (single multi-stage image, or `docker-compose` with a MySQL
+  service) is decided per feature in `plan.md`.
+- **Configuration**: runtime application configuration (database URL,
+  server port, feature flags, etc.) is provided via the `.env` file
+  loaded by Next.js / the Node.js runtime, in standard dotenv format.
 - **Testing**: unit tests are mandatory (per Principle III). The runner
   (Vitest, Jest, or equivalent) is decided per feature in `plan.md`.
-- **Secrets**: MUST NOT be committed. Local secrets go in `.env.local`
-  (gitignored) or are passed at container run time. The repo-level `.env`
-  is JSON and holds model configuration only — see `CLAUDE.md` → Environment.
+- **Secrets**: passwords, API keys, and other values that MUST NOT be
+  committed live in `.env.local` (gitignored) or are passed at container
+  run time. The repo-level `.env` that the coding-agent harness reads as
+  JSON and that holds model configuration only — see `CLAUDE.md` →
+  Environment — is a separate concern and MUST NOT be used as the source
+  of application runtime configuration.
 
 ## Development Workflow
 
@@ -195,7 +301,7 @@ goal of demonstrating clarity of intent.
   README is incomplete.
 - Pull requests for code MUST link the active spec, plan, and tasks.
   Reviewers MUST reject PRs whose artifacts were not produced through the
-  SDD skills, and PRs that violate Principle II–VI.
+  SDD skills, and PRs that violate Principle II–VIII.
 - When in doubt, prefer amending this constitution over maintaining
   out-of-band conventions.
 
@@ -212,10 +318,10 @@ goal of demonstrating clarity of intent.
   - **PATCH** — clarifications, wording fixes, non-semantic refinements.
 - Compliance review: every `/speckit-implement` run MUST include a
   Constitution Check section in `plan.md`; deviations from Principles
-  II–VI require an entry in `plan.md` → Complexity Tracking with the
+  II–VIII require an entry in `plan.md` → Complexity Tracking with the
   simpler alternative that was rejected and why.
 - The authoritative runtime guidance for coding agents is `CLAUDE.md`;
   the authoritative process guidance is the Spec Kit skill documentation
   under `.claude/skills/speckit-*`.
 
-**Version**: 2.1.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-18
+**Version**: 2.2.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-18

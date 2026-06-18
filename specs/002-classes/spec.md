@@ -5,6 +5,16 @@
 **Status**: Draft
 **Input**: User description: "create the classes feature"
 
+## Clarifications
+
+### Session 2026-06-18
+
+- Q: Class `level` field — free-text or predefined list? → A: Predefined list (seeded, read-only in Stage 1). Mirrors the `subject` decision in `001-teachers`. The Add Class form exposes `level` as a dropdown populated from a seeded `levels` reference table (e.g., "Primary 1"…"Primary 6", "Secondary 1"…"Secondary 4"); Joi validates the submitted value against the closed set; adding new levels is deferred to a later stage (admin UI for the `levels` reference table) and is out of Stage 1 scope.
+- Q: How should the admin pick the form teacher? → A: Searchable dropdown of existing teachers. The Add Class form's "Form Teacher" control is a dropdown (combo box) populated from the GET /api/teachers response; the admin selects a teacher, and the form submits the selected teacher's `email` in the `teacherEmail` field — so the API contract is unchanged. The `404 "Teacher not found"` path is retained as a defence against the race where a teacher is deleted between page load and submit. When no teachers exist, the dropdown is empty and the Add Class form's submit button is disabled, with a clear "Add a teacher first" message.
+- Q: Should class-name uniqueness be a hard requirement? → A: Yes — class `name` is globally unique. Joi rejects empty / missing `name` with `400`; the MySQL `UNIQUE` constraint on `classes.name` makes the duplicate detection race-safe. On duplicate, the route returns `409 Conflict` with `{ "error": "Class name already in use" }`. This codifies the previous soft Assumption and aligns with the `409` pattern used for duplicate email (`001-teachers`) and "teacher already assigned" (`002-classes` FR-005).
+- Q: Pagination for the Classes list? → A: No pagination in Stage 1. The GET endpoint returns the full list of classes in a single `{ "data": [...] }` response. The Stage 1 upper bound is ≤ 500 classes (see Assumptions); pagination is a future-stage amendment if the school outgrows that bound. This mirrors the `001-teachers` decision for API consistency.
+- Q: What is the primary key of a `Class`? → A: Surrogate auto-increment `id`. The DB column is numeric and auto-generated; `name` carries a separate `UNIQUE` index (the one FR-005c adds). The `id` is **not** exposed in the Stage 1 API response (edit/delete are out of Stage 1 scope per the constitution), but the column exists so a future edit/delete endpoint can route by it without a schema migration.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Add a New Class with a Form Teacher (Priority: P1)
@@ -21,6 +31,7 @@ An administrator creates a new class by completing an "Add Class" form with the 
 2. **Given** the administrator is on the Add Class screen, **When** the administrator submits the form with one or more invalid or missing required fields (level, name, or teacher email), **Then** the screen shows the corresponding field-level error states and the class is not created.
 3. **Given** a teacher with the supplied `teacherEmail` does not exist in the system, **When** the administrator submits the Add Class form, **Then** the system rejects the submission and shows a meaningful error indicating that the teacher could not be found.
 4. **Given** the teacher identified by `teacherEmail` is already the form teacher of another class, **When** the administrator submits the Add Class form for that same teacher, **Then** the system rejects the submission and shows a meaningful error indicating that the teacher is already assigned as a form teacher.
+5. **Given** a class with the same `name` already exists in the system, **When** the administrator submits the Add Class form with that name, **Then** the system rejects the submission with HTTP `409 Conflict` and shows a meaningful error indicating that the class name is already in use.
 
 ---
 
@@ -43,6 +54,9 @@ An administrator navigates to the Classes screen and sees the complete list of c
 ### Edge Cases
 
 - What happens when the administrator enters a `teacherEmail` that is not a valid email format? — The form must show a field-level email error and reject submission.
+- What happens when the Add Class form is submitted with a `level` that is not in the predefined list (unknown, removed, or marked inactive)? — The form must show a field-level Level error and reject submission with HTTP `400`.
+- What happens when the admin opens the Add Class screen with no teachers registered? — The Form Teacher dropdown is empty, the form's submit button is disabled, and a clear "Add a teacher first" message links the admin to the Add Teacher flow.
+- What happens when the Add Class form is submitted with a `name` that matches an existing class? — The form must show a field-level Name error and reject submission with HTTP `409` and `{ "error": "Class name already in use" }`. Two simultaneous submissions with the same name cannot both succeed (race-safe via the `UNIQUE` constraint).
 - What happens when the administrator enters a `teacherEmail` that exists in the system but the teacher has been deleted before the request is processed? — The system must treat this as a "teacher not found" condition and reject submission with a meaningful error.
 - What happens when two administrators submit the Add Class form for the same teacher at the same time? — The system must accept at most one of the submissions and reject the other with the "teacher already assigned" error, so the uniqueness invariant on form teacher is preserved.
 - What happens when a teacher is deleted (or otherwise no longer available) after a class was created with that teacher as the form teacher? — This scenario is out of scope for v1; the class keeps the form teacher reference as it was at creation time.
@@ -53,28 +67,36 @@ An administrator navigates to the Classes screen and sees the complete list of c
 
 ### Functional Requirements
 
-- **FR-001**: The system MUST provide a screen titled "Add Class" that exposes input controls for **Level**, **Name**, and **Teacher Email**, with the labels, order, and field types matching the Figma design (`./designs/classes/Add Class - Empty State.png` and `./designs/classes/Fields.png`).
+- **FR-001**: The system MUST provide a screen titled "Add Class" that exposes input controls for **Level** (a dropdown populated from the predefined, seeded `levels` reference list — see Clarifications, Session 2026-06-18), **Name**, and **Form Teacher** (a searchable dropdown of currently registered teachers, populated from the existing-teachers list — see Clarifications, Session 2026-06-18), with the labels, order, and field types matching the Figma design (`./designs/classes/Add Class - Empty State.png` and `./designs/classes/Fields.png`).
 - **FR-002**: The system MUST require Level, Name, and Teacher Email to be supplied and valid before the Add Class form can be submitted successfully.
 - **FR-003**: The system MUST validate that the Teacher Email field contains a syntactically valid email address.
 - **FR-004**: The system MUST treat the Teacher Email as a reference to an existing teacher registered in the system (see the Teachers feature); the system MUST reject the submission with a meaningful error if no teacher with that email exists.
 - **FR-005**: The system MUST enforce the invariant that a teacher can be the form teacher of **at most one** class. Submitting a class whose `teacherEmail` is already the form teacher of another class MUST be rejected with a meaningful error.
-- **FR-006**: The system MUST expose a public API endpoint to create a class that accepts `level`, `name`, and `teacherEmail` in the request body, and, on success, returns a confirmation response with HTTP status 201.
-- **FR-007**: The system MUST expose a public API endpoint to list all classes that, on success, returns the classes wrapped in a `data` array with HTTP status 200, with each entry containing `level`, `name`, and `formTeacher.name` (the form teacher's name).
+- **FR-005a**: The system MUST require the selected **Level** to reference an **active** entry in the predefined `levels` reference list; submissions with a level that is missing, unknown, or marked inactive MUST be rejected with a field-level error on the Level control.
+- **FR-005b**: When no teachers are currently registered, the Add Class screen MUST present the Form Teacher dropdown in an empty state with a clear "Add a teacher first" message, and the form's submit button MUST be disabled. Submitting a class with a `teacherEmail` that does not reference any registered teacher MUST be rejected with HTTP `404` and `{ "error": "Teacher not found" }` (covers the race where a teacher is deleted between page load and submit — see Clarifications, Session 2026-06-18).
+- **FR-005c**: The system MUST enforce global uniqueness on the class `name`. Submitting a class whose `name` matches an existing class MUST be rejected with HTTP `409 Conflict` and `{ "error": "Class name already in use" }`. Uniqueness is enforced by the MySQL `UNIQUE` constraint on `classes.name` so the behaviour is race-safe by construction (see Clarifications, Session 2026-06-18).
+- **FR-006**: The system MUST expose a public API endpoint to create a class that accepts `level`, `name`, and `teacherEmail` (the form teacher's `email`) in the request body, and, on success, returns a confirmation response with HTTP status 201. The wire shape remains `teacherEmail` even though the UI uses a dropdown (see Clarifications, Session 2026-06-18).
+- **FR-007**: The system MUST expose a public API endpoint to list all classes that, on success, returns the full list of classes wrapped in a `data` array with HTTP status 200, with each entry containing `level`, `name`, and `formTeacher.name` (the form teacher's name). Stage 1 does not paginate; the response is the complete set (see Clarifications, Session 2026-06-18).
 - **FR-008**: The system MUST provide a screen titled "Classes" that lists the registered classes with each entry showing `level`, `name`, and `formTeacher.name`, in a layout consistent with the Figma design (`./designs/classes/Classes - Empty State.png` and `./designs/classes/Classes - Filled State.png`).
 - **FR-009**: The Classes screen MUST present an empty state when no classes are registered, and a filled state when at least one class exists, both matching the corresponding Figma design.
-- **FR-010**: All API endpoints for this feature MUST, on any error condition, return a JSON response body of the form `{ "error": "Some meaningful error message" }` together with an appropriate HTTP status code (e.g., 400 for client validation failures, 404 for a non-existent teacher, 409 for the "teacher already assigned" conflict).
+- **FR-010**: All API endpoints for this feature MUST, on any error condition, return a JSON response body of the form `{ "error": "Some meaningful error message" }` together with an appropriate HTTP status code. The status-code mapping MUST be: `400 Bad Request` for Joi / payload validation failures (missing/invalid `level`, `name`, or `teacherEmail`; unknown/inactive `level`); `404 Not Found` for a non-existent teacher (`teacherEmail` does not match any registered teacher); `409 Conflict` for "teacher already assigned" to another class **or** duplicate class `name`; `415 Unsupported Media Type` for requests whose `Content-Type` is not `application/json`; `500 Internal Server Error` for unhandled server failures; `503 Service Unavailable` when the data store is briefly unreachable.
 - **FR-011**: The Add Class screen MUST preserve the administrator's input on a failed submission and surface the field-level errors shown in the Figma error state.
 - **FR-012**: Class data and the form-teacher relationship MUST be persisted so that they survive server restarts and remain consistent with the Teachers feature (i.e., a class's form teacher is always an existing teacher).
 
 ### Key Entities
 
 - **Class**: Represents a class registered in the system.
-  - `level` (string, required) — the educational level of the class (e.g., "Primary 1"); the allowed values are determined by the Figma design and the operating context of the private education business.
-  - `name` (string, required) — the class's display name (e.g., "Class 1A"); the format is determined by the Figma design.
+  - `id` (numeric, auto-generated, primary key) — the surrogate identifier of the class. **Not** exposed in the Stage 1 API response (see Clarifications, Session 2026-06-18); exists so a future edit/delete endpoint can route by it without a migration.
+  - `level` (string, required, references `Level.name`) — the educational level of the class, chosen from the predefined `levels` reference list (see Level entity below). Examples: "Primary 1", "Primary 2", …, "Secondary 4".
+  - `name` (string, required, unique) — the class's display name (e.g., "Class 1A"); the format is determined by the Figma design. Uniqueness is enforced by a separate `UNIQUE` index (see `FR-005c`).
   - `formTeacher` (reference to a Teacher, required) — the teacher who serves as the form teacher of the class.
     - On the wire / in the UI, the class is identified to its form teacher by the form teacher's `email` (per the API request shape in the requirements file: `teacherEmail`).
     - The system stores the reference as the form teacher's unique identifier (email) so that the form-teacher name can be resolved for display.
   - Relationships: a Class references exactly one Teacher via the form-teacher relationship. A Teacher may be the form teacher of zero or one Class (see FR-005).
+
+- **Level** (reference table, seeded in Stage 1; admin-managed in a later stage):
+  - `name` (string, required, unique) — display name of the level as it appears in the Add Class dropdown (e.g., "Primary 1", "Primary 2", …, "Secondary 4").
+  - `active` (boolean, default `true`) — whether the level is currently selectable in the Add Class form. Stage 1 treats this list as read-only and seeds it; admin authoring of levels is out of Stage 1 scope (see Assumptions).
 
 ## Success Criteria *(mandatory)*
 
@@ -82,17 +104,21 @@ An administrator navigates to the Classes screen and sees the complete list of c
 
 - **SC-001**: An administrator can create a new class and see the class appear in the Classes list in under 30 seconds of form time, with no page reload required beyond standard navigation.
 - **SC-002**: 100% of successful Add Class submissions result in a class record that is persisted and visible on the Classes screen after a full page refresh, with the correct form teacher name displayed.
-- **SC-003**: 100% of Add Class submissions with an invalid email format, an unknown `teacherEmail`, or a `teacherEmail` already assigned to another class as form teacher are rejected with a field-level or form-level error message.
+- **SC-003**: 100% of Add Class submissions with an invalid email format, an unknown `teacherEmail`, a `teacherEmail` already assigned to another class as form teacher, an unknown `level`, or a duplicate class `name` are rejected with a field-level or form-level error message.
 - **SC-004**: The invariant "a teacher can be the form teacher of at most one class" holds for 100% of class records in the system at all times, including under concurrent submissions.
 - **SC-005**: The Classes screen presents the empty state on first load (zero classes) and the filled state immediately after the first successful creation, with no stale or empty data shown.
-- **SC-006**: 100% of API errors (validation, not-found, conflict, server) for the classes endpoints are returned with the agreed JSON error envelope (`{ "error": "..." }`) and an appropriate HTTP status code, so they can be consumed by automated test tools.
+- **SC-006**: 100% of API errors (validation, not-found, conflict, content-type, server, data store) for the classes endpoints are returned with the agreed JSON error envelope (`{ "error": "..." }`) and the correct HTTP status code (`400` for validation, `404` for teacher not found, `409` for duplicate name or teacher already assigned, `415` for non-JSON content type, `500` for unhandled server failures, `503` when the data store is briefly unreachable), so they can be consumed by automated test tools.
 
 ## Assumptions
 
 - The administrator accesses the application on a modern desktop browser; mobile/responsive support is not required for the Classes feature in v1.
 - The Teachers feature (see `specs/001-teachers/spec.md`) is in place before this feature is implemented; the Add Class form's `teacherEmail` field is validated against the existing teacher records. If the Teachers feature is not yet present, an equivalent minimal teacher record set (e.g., a fixture) is required for testing.
 - The Add Class form's field types (e.g., text input, dropdown, validation rules) follow the Figma designs in `./designs/classes/`. The "Fields" design asset is treated as the authoritative reference for field types and validation cues.
-- The list of allowed `level` values is provided by the Figma design (e.g., "Primary 1", "Primary 2", ...). If the design does not enumerate the levels, the system accepts the levels shown in the Filled State of the Classes screen and rejects any other value with a field-level error.
-- The `name` of a class is unique within the system; submitting a class whose name is already in use is rejected with a meaningful error. (The requirements file does not state this explicitly; it is treated as a reasonable default for an admin tool and is captured here so it can be amended if the Figma design or business rules say otherwise.)
+- The list of allowed `level` values is provided by a seeded `levels` reference table (e.g., "Primary 1"…"Primary 6", "Secondary 1"…"Secondary 4"). The table is read-only in Stage 1; admin authoring of levels is a future-stage amendment. The list is closed and any submitted level not in the table is rejected with a field-level error (see Clarifications, Session 2026-06-18).
+- The Form Teacher control on the Add Class form is a searchable dropdown of existing teachers, populated from `GET /api/teachers`. The wire shape submitted to the API is still `{ "teacherEmail": "..." }` — the dropdown is a UX choice, not a contract change. The `404 "Teacher not found"` path is retained as a race-condition defence, not a normal user error.
+- The `name` of a class is unique within the system; this is now codified as `FR-005c` (was previously a soft Assumption). The MySQL `UNIQUE` constraint on `classes.name` enforces it race-safely.
+- Stage 1 assumes a realistic upper bound of **≤ 500 classes** for the system. The GET endpoint returns the full list in a single response (no pagination); if the school outgrows this bound, pagination is added in a future stage as an amendment to FR-007 (see Clarifications, Session 2026-06-18). This matches the `001-teachers` decision.
+- The `Class` table has a numeric, auto-generated `id` primary key (surrogate). The `id` is **not** included in the Stage 1 API response — the wire shape remains `{ "level", "name", "formTeacher": { "name" } }` for each entry in `GET /api/classes` and the POST response is a confirmation. The column exists so a future edit/delete endpoint can route by id without a schema migration (see Clarifications, Session 2026-06-18).
+- The cross-cutting status-code table for this spec includes `400` (validation) / `404` (teacher not found) / `409` (duplicate name or teacher already assigned) / `415` (request `Content-Type` is not `application/json`) / `500` (unhandled server failure) / `503` (data store briefly unreachable). Aligns with `003-backend-api-db/spec.md` Clarifications, Session 2026-06-18.
 - The Classes feature does not edit or delete classes in v1; create and list are the only two operations. Edit/delete are out of scope until a future feature amends this spec.
 - Login, authentication, and role-based access control are explicitly out of scope per the requirements ("you do not need to implement login and access control").

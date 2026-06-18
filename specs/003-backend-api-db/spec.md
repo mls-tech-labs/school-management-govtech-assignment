@@ -5,6 +5,15 @@
 **Status**: Draft
 **Input**: User description: "create the backend apis and db schema feature"
 
+## Clarifications
+
+### Session 2026-06-18
+
+- Q: Reference tables and their GET endpoints? → A: Two reference tables (`subjects`, `levels`) + two new GET endpoints (`GET /api/subjects`, `GET /api/levels`). Both tables are seeded in Stage 1 and treated as read-only by the API (admin authoring is a future stage; see Assumptions). The Add Teacher and Add Class forms use these endpoints to populate their dropdowns. `teachers.subject` is a foreign key to `subjects.name`; `classes.level` is a foreign key to `levels.name`. A submission that references an unknown / inactive reference value is rejected with `400 Bad Request` and `{ "error": "Invalid subject" | "Invalid level" }`. The exact seed mechanism (migration vs. seed script vs. app-boot) is a separate decision — see Clarifications, Session 2026-06-18 (Q5).
+- Q: Confirm 003's Class PK and class-name uniqueness rules match `002-classes`? → A: Confirmed. The 003 spec uses (a) a numeric, auto-generated surrogate `id` as the `classes` primary key (not exposed in the Stage 1 API response), and (b) **global** `name` uniqueness on `classes` (replacing the previous `(level, name)` composite rule). Both align with the per-feature spec.
+- Q: Should `415 Unsupported Media Type` and `503 Service Unavailable` be in the cross-cutting API contract? → A: Yes — both stay in `003` and are **propagated to `001-teachers` and `002-classes`** so the three specs share a single status-code table. The full mapping is `400` (validation) / `404` (teacher not found, classes only) / `409` (uniqueness / referential integrity) / `415` (request `Content-Type` is not `application/json`) / `500` (unhandled server failure) / `503` (data store briefly unreachable). `001` and `002` are updated to match.
+- Q: How is the seed data for `subjects` and `levels` populated? → A: Second migration (separate from the schema migration) that idempotently inserts the seed list. The seed list is inside the version-controlled migration set, runs alongside the schema migration on `docker compose up`, and is idempotent on subsequent boots. No separate `npm run seed` step, no boot-time seeder, no manual SQL file.
+
 ## User Scenarios & Testing *(mandatory)*
 
 This feature is an internal, cross-cutting capability. The "user" is the rest of
@@ -158,9 +167,10 @@ code mapping.
   with `400 Bad Request`; the chosen behavior is decided in `plan.md`
   and documented in the API contract.
 - What happens when an integrity violation is detected (duplicate
-  email, duplicate form teacher, missing teacher, duplicate
-  level+name)? — The endpoint MUST map the violation to the agreed
-  status code (see FR-009) and a meaningful error message.
+  email, duplicate form teacher, missing teacher, duplicate class
+  `name`, unknown subject, unknown level)? — The endpoint MUST map
+  the violation to the agreed status code (see FR-009, FR-009a) and a
+  meaningful error message.
 - What happens when a list endpoint is called while the data store is
   briefly unavailable? — The endpoint MUST respond with `503 Service
   Unavailable` and the agreed error envelope, and the frontend MUST
@@ -188,6 +198,10 @@ code mapping.
     `201 Created`.
   - `GET /api/teachers` — list all teachers; success returns HTTP
     `200 OK` with `{ "data": [ ...teachers ] }`.
+  - `GET /api/subjects` — list all active subjects; success returns
+    HTTP `200 OK` with `{ "data": [ { "name", "active" } ] }`,
+    filtered to entries where `active = true`. (See Clarifications,
+    Session 2026-06-18 — supports the Add Teacher dropdown.)
 - **FR-003**: The system MUST expose a public API surface for the
   Classes feature with at least the following endpoints, each of which
   conforms to the cross-cutting contract in FR-010..FR-015:
@@ -197,25 +211,33 @@ code mapping.
     `200 OK` with `{ "data": [ ...classes ] }`. Each entry includes
     `level`, `name`, and `formTeacher.name` (the form teacher's name
     resolved from the referenced teacher record).
+  - `GET /api/levels` — list all active levels; success returns
+    HTTP `200 OK` with `{ "data": [ { "name", "active" } ] }`,
+    filtered to entries where `active = true`. (See Clarifications,
+    Session 2026-06-18 — supports the Add Class dropdown.)
 - **FR-004**: The system MUST store the following attributes for each
   **teacher** record, with the constraints listed:
   - `name` (string, required, non-empty).
-  - `subject` (string, required, non-empty).
+  - `subject` (string, required, non-empty, **foreign key →
+    `subjects.name`**, must reference an active entry in the
+    `subjects` reference list; see Clarifications, Session 2026-06-18).
   - `email` (string, required, must be a syntactically valid email
     address, **unique across all teacher records**).
-  - `contactNumber` (string, required, digits only, length/format as
-    defined in the Figma design for the Add Teacher screen).
+  - `contactNumber` (string, required, exactly 8 digits, must start
+    with `8` or `9` — Singapore mobile format; see
+    `001-teachers/spec.md` Clarifications, Session 2026-06-18).
 - **FR-005**: The system MUST store the following attributes for each
   **class** record, with the constraints listed:
-  - `level` (string, required, non-empty, drawn from the allowed
-    levels shown in the Figma design).
-  - `name` (string, required, non-empty).
+  - `level` (string, required, non-empty, **foreign key →
+    `levels.name`**, must reference an active entry in the
+    `levels` reference list; see Clarifications, Session 2026-06-18).
+  - `name` (string, required, non-empty, **unique across all class
+    records** — class names are globally unique; see
+    `002-classes/spec.md` Clarifications, Session 2026-06-18).
   - `formTeacherEmail` (string, required, must be a syntactically valid
     email address, **must reference an existing teacher's `email`**, and
     **must be unique across all class records** — a teacher can be the
     form teacher of at most one class).
-  - The combination of `level` and `name` MUST be unique across all
-    class records.
 - **FR-006**: The system MUST enforce `email` uniqueness on the
   `teachers` data at the data layer, so that even direct writes that
   bypass the API cannot create two teachers with the same email.
@@ -226,10 +248,25 @@ code mapping.
   the `classes` data at the data layer, so that even direct writes
   that bypass the API cannot assign the same teacher as the form
   teacher of two different classes.
-- **FR-009**: The system MUST enforce uniqueness of the `(level, name)`
-  pair on the `classes` data at the data layer, so that even direct
-  writes that bypass the API cannot create two classes with the same
-  level and name.
+- **FR-009**: The system MUST enforce **global** `name` uniqueness on
+  the `classes` data at the data layer, so that even direct writes that
+  bypass the API cannot create two classes with the same `name`
+  (regardless of `level`) — aligns with `002-classes/spec.md`
+  Clarifications, Session 2026-06-18.
+- **FR-009a**: The system MUST enforce referential integrity between
+  `teachers.subject` and `subjects.name`, and between
+  `classes.level` and `levels.name`, so that a teacher or class cannot
+  reference a non-existent reference-list entry (see Clarifications,
+  Session 2026-06-18).
+- **FR-009b**: The system MUST enforce that a `subject` or `level`
+  referenced by an existing teacher or class cannot be removed or
+  marked inactive; reference-list entries referenced by live data
+  are protected from deactivation. Deactivation is a future-stage
+  admin operation and is out of Stage 1 scope (see Assumptions).
+- **FR-009c**: The system MUST expose `GET /api/subjects` and
+  `GET /api/levels` endpoints that return the list of active reference
+  entries as `{ "data": [ { "name", "active" } ] }`, with
+  `active = true` filter applied server-side (see FR-002 / FR-003).
 - **FR-010**: All API endpoints MUST accept and return JSON, and MUST
   require `Content-Type: application/json` on requests that carry a
   body. Requests with a different content type MUST be rejected with
@@ -261,29 +298,54 @@ code mapping.
 - **FR-016**: The data store schema MUST be created and updated through
   a repeatable, versioned migration process so that the schema can be
   recreated from scratch and upgraded incrementally.
+- **FR-017**: The `subjects` and `levels` reference tables MUST be
+  populated by a **second migration** (separate from the schema
+  migration) that idempotently inserts the Stage 1 seed list. The
+  seed list is part of the version-controlled migration set, runs
+  alongside the schema migration on `docker compose up`, and is
+  idempotent (re-running on a populated DB is a no-op). No separate
+  `npm run seed` step, no boot-time seeder, no manual SQL file
+  (see Clarifications, Session 2026-06-18).
 
 ### Key Entities
 
 - **Teacher** (data store table: `teachers`).
   - `name` (string, required).
-  - `subject` (string, required).
+  - `subject` (string, required, **foreign key → `subjects.name`**).
   - `email` (string, required, unique).
   - `contactNumber` (string, required).
   - Internal persistence identifier (a value the system uses for joins
     and bookkeeping; not exposed in the public API for v1).
-  - Integrity rules: `email` is unique. The system MUST NOT allow a
-    second teacher with the same `email` to be inserted.
+  - Integrity rules: `email` is unique; `subject` references an active
+    entry in `subjects`. The system MUST NOT allow a second teacher
+    with the same `email` to be inserted.
 
 - **Class** (data store table: `classes`).
-  - `level` (string, required).
-  - `name` (string, required).
+  - `level` (string, required, **foreign key → `levels.name`**).
+  - `name` (string, required, **unique** — class names are globally
+    unique; see Clarifications, Session 2026-06-18).
   - `formTeacherEmail` (string, required, foreign key → `teachers.email`).
-  - Internal persistence identifier (a value the system uses for joins
-    and bookkeeping; not exposed in the public API for v1).
-  - Integrity rules: `(level, name)` is unique;
-    `formTeacherEmail` is unique; `formTeacherEmail` references an
-    existing `teachers.email`; a teacher can be the form teacher of at
-    most one class.
+  - Internal persistence identifier (numeric, auto-generated, primary
+    key — see `002-classes/spec.md` Clarifications, Session 2026-06-18;
+    not exposed in the Stage 1 public API).
+  - Integrity rules: `name` is globally unique; `formTeacherEmail` is
+    unique; `formTeacherEmail` references an existing `teachers.email`;
+    `level` references an active entry in `levels`; a teacher can be
+    the form teacher of at most one class.
+
+- **Subject** (data store table: `subjects`; seeded in Stage 1, read-only).
+  - `name` (string, required, unique).
+  - `active` (boolean, default `true`).
+  - See Clarifications, Session 2026-06-18 — supports the Add Teacher
+    dropdown. Admin authoring of subjects is out of Stage 1 scope
+    (see Assumptions).
+
+- **Level** (data store table: `levels`; seeded in Stage 1, read-only).
+  - `name` (string, required, unique).
+  - `active` (boolean, default `true`).
+  - See Clarifications, Session 2026-06-18 — supports the Add Class
+    dropdown. Admin authoring of levels is out of Stage 1 scope
+    (see Assumptions).
 
 - **Relationship**: each class references exactly one teacher via
   `formTeacherEmail`; each teacher may be referenced by zero or one
@@ -346,8 +408,17 @@ code mapping.
   the administrator in a meaningful way.
 - Migrations are part of the application source tree and are run as
   part of the application's normal startup or as a documented
-  one-off command; the exact mechanism is decided in `plan.md`.
-- All endpoints are read or write operations on the two entities
+  one-off command; the exact mechanism is decided in `plan.md`. The
+  Stage 1 reference-list seed list (subjects and levels) is delivered
+  as a second migration (separate from the schema migration) that
+  idempotently inserts the entries — see `FR-017` and Clarifications,
+  Session 2026-06-18.
+- All endpoints are read or write operations on the entities
   above. There are no additional endpoints (e.g., health checks,
   metrics, administrative endpoints) in scope for v1. Health checks
   MAY be added later as a separate feature.
+- The `subjects` and `levels` reference tables are seeded in Stage 1
+  and treated as read-only by the API; no POST/PUT/DELETE endpoint
+  for either table is in scope. Admin authoring of reference-list
+  entries is a future-stage amendment (see `001-teachers/spec.md` and
+  `002-classes/spec.md` Clarifications, Session 2026-06-18).
