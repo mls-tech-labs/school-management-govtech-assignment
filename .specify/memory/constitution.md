@@ -1,83 +1,126 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.1.0 → 2.2.0  [MINOR: two new principles + new Stage Scope section]
+Version change: 2.2.0 → 2.3.0  [MINOR: UI library swap (SGDS v3 → Ant Design)
+                              + new styling framework (Tailwind CSS) +
+                              Principle VIII wording updated to match]
 
-Modified principles: none (Principles I–VI are unchanged in title and intent;
-                     wording in Technical Stack Constraints and Secrets is
-                     clarified, see "Modified sections" below).
-
-Added principles:
-  VII. Joi Schema Validation (input + DB column alignment)
-       Joi MUST validate every API request body, query parameter, and
-       server-trusted form submission that crosses a trust boundary.
-       The Joi schema for each entity MUST mirror the typeORM entity
-       columns so the same field-level constraints (required-ness,
-       length, type, format) appear in both validation and persistence.
-       New principle → MINOR.
-
+Modified principles:
   VIII. UI Quality — Self-Explanatory, Reusable, Simple
-       Every UI component MUST be self-explanatory (clear name,
-       explicit props, no hidden coupling), reusable (no feature-
-       specific hard-coding; composed from generic primitives), and
-       as simple as the requirement allows. New principle → MINOR.
-
-Added sections:
-  Stage Scope
-    Captures the currently in-scope features (Stage 1 = Teachers UI
-    Create+Read, Classes UI Create+Read, and their backend APIs) so
-    any feature spec that goes outside it requires an explicit
-    amendment.
+       "Reusable" guidance changed from "composed from generic SGDS v3
+       primitives" to "composed from generic Ant Design primitives and
+       styled with Tailwind CSS utilities". Title and intent unchanged
+       (UI quality — self-explanatory + reusable + simple). MINOR
+       because the concrete stack reference inside the principle is
+       materially different, even though the principle itself is not
+       removed or redefined.
 
 Modified sections (non-principle):
   Technical Stack Constraints
-    - "the application MUST run in a Docker container" →
-      "the application MUST run in a Docker container, and the
-      MySQL database MUST also run in a Docker container." PATCH
-      clarification: pins MySQL's runtime as Docker per the user's
-      stated environment.
-    - Secrets:
-        "Local secrets go in `.env.local` (gitignored) or are passed
-        at container run time. The repo-level `.env` is JSON and holds
-        model configuration only — see `CLAUDE.md` → Environment." →
-        "Runtime application configuration (database URL, server
-        port, feature flags, etc.) is provided via the `.env` file
-        loaded by Next.js / the runtime (standard dotenv format).
-        Secrets that MUST NOT be committed (passwords, API keys) live
-        in `.env.local` (gitignored) or are passed at container run
-        time. The repo-level `.env` that is JSON and holds model
-        configuration only — see `CLAUDE.md` → Environment — is a
-        separate concern and MUST NOT be used for application
-        runtime config." PATCH clarification: separates the
-        application's dotenv `.env` from the JSON `.env` consumed
-        by the coding-agent harness, and aligns the document with
-        the user's "all the configurations are provided via .env
-        file" statement.
+    - "UI components" line rewritten:
+        before: "Singapore Government Design System v3 (SGDS v3) is
+                 the required component library ... The exact
+                 `@govtechsg/sgds-react` (or equivalent) package version
+                 is pinned in `package.json` at the first frontend task."
+        after:  "Ant Design (`antd`) is the required component library
+                 for the active feature ... The exact `antd` package
+                 version is pinned in `package.json` at the first
+                 frontend task."
+    - New "Styling" line added:
+        "Tailwind CSS is the required styling solution for the active
+         feature. All visual presentation — layout, spacing, colour,
+         typography, responsive behaviour — MUST be expressed via
+         Tailwind utility classes (in JSX `className` or template
+         strings consumed by Tailwind's content scanner) rather than
+         hand-written CSS, inline `style` objects, or per-component
+         CSS modules, except where Ant Design's documented escape
+         hatches require it. The Tailwind config (`tailwind.config.*`)
+         is the single place where project tokens (colour palette,
+         font stack, breakpoints) are defined; component code MUST
+         reference those tokens via utility classes, not raw hex
+         values. The exact `tailwindcss`, `postcss`, and `autoprefixer`
+         package versions are pinned in `package.json` at the first
+         frontend task."
+    PATCH-level wording change to the UI library entry + a new
+    Styling entry. Together with the Principle VIII change this is
+    material guidance expansion → MINOR.
+
+  Follow-up TODOs (Sync Impact Report from 2.2.0):
+    - TODO(SGDS_V3_PACKAGE): resolved by replacement — no longer
+      applicable; the new follow-up is TODO(ANTD_TAILWIND_VERSION)
+      (see below).
+
+Added principles: none.
+Removed principles: none.
+Added sections: none (the new "Styling" line lives inside the
+                  existing Technical Stack Constraints block, not as
+                  a new section).
 
 Templates requiring updates:
-  - .specify/templates/plan-template.md     ✅ no change
-  - .specify/templates/spec-template.md      ✅ no change
-  - .specify/templates/tasks-template.md     ✅ no change
-  - .specify/templates/checklist-template.md ✅ no change
+  - .specify/templates/plan-template.md     ✅ no change (template is generic)
+  - .specify/templates/spec-template.md      ✅ no change (template is generic)
+  - .specify/templates/tasks-template.md     ✅ no change (template is generic)
+  - .specify/templates/checklist-template.md ✅ no change (template is generic)
   - .specify/templates/commands/*.md         ✅ none present
 
-Follow-up TODOs:
+Dependent artifacts flagged for manual follow-up (NOT amended by this
+constitution update — they are downstream of `package.json` /
+`app/layout.tsx` / `components/` / feature specs and require their own
+PRs):
+  - ⚠ package.json — replace `@govtechsg/sgds-react@^2.7.7` with
+    `antd@<pinned>`, `tailwindcss@<pinned>`, `postcss@<pinned>`,
+    `autoprefixer@<pinned>`. (package-lock.json regenerates from this.)
+  - ⚠ app/layout.tsx — replace
+    `import "@govtechsg/sgds-react/css/sgds.css";` with
+    `import "antd/dist/reset.css";` plus Tailwind's compiled CSS
+    injection (`import "./globals.css";` containing the
+    `@tailwind base; @tailwind components; @tailwind utilities;`
+    directives).
+  - ⚠ tailwind.config.* + postcss.config.* — new files declaring
+    `content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"]`
+    and the project tokens.
+  - ⚠ components/Button.tsx, components/Select.tsx,
+    components/FormField.tsx — replace SGDS imports (`SgdsButton`,
+    `Combobox`, `FormControl`) with the corresponding `antd`
+    primitives (`Button`, `Select`, `Form`) and re-style with
+    Tailwind utility classes.
+  - ⚠ specs/001-teachers/plan.md, specs/001-teachers/research.md,
+    specs/001-teachers/tasks.md — remove `@govtechsg/sgds-react@^3`
+    references; replace with the new `antd` + Tailwind entries.
+  - ⚠ specs/002-classes/plan.md, specs/002-classes/research.md,
+    specs/002-classes/tasks.md — same edits as 001.
+  - ⚠ README.md — the directory layout, dependency list, and any
+    quick-start commands should reflect Ant Design + Tailwind instead
+    of SGDS v3 (currently the README does not explicitly name SGDS,
+    so a quick scan-and-update is sufficient).
+  - ⚠ requirements/Full Stack Assignment.md — informational only;
+    the original requirement already lists "Ant Design or Material UI"
+    as an example, so this change brings the implementation in line
+    with the original brief and no edit is strictly required.
+
+Follow-up TODOs (carry forward, plus the new one):
   - TODO(FEATURE_001): in plan.md → Technical Context, decide the
     unit-test runner (Vitest vs Jest). Principle III does not fix
     the ordering but still requires the runner decision here.
+    (Resolved at the project level by `package.json`: `vitest`.)
   - TODO(FEATURE_001): in plan.md → Technical Context, decide the
     container layout (single multi-stage Dockerfile vs docker-compose
     with a MySQL service).
-  - TODO(SGDS_V3_PACKAGE): pin the @govtechsg/sgds-react (or
-    equivalent) package version in the first frontend plan so the
-    constitution's "v3" requirement is reflected in package.json.
-  - TODO(JOI_ALIGNMENT): on the first PR that adds a typeORM
-    entity, verify a matching Joi schema exists with identical
-    field-level constraints (required-ness, length, regex, format).
+    (Resolved at the project level by `docker/docker-compose.yml`.)
+  - TODO(SGDS_V3_PACKAGE): RESOLVED by replacement (see above). No
+    longer applicable.
+  - TODO(ANTD_TAILWIND_VERSION): pin the `antd`, `tailwindcss`,
+    `postcss`, and `autoprefixer` package versions in `package.json`
+    at the first frontend plan so the constitution's version-pin
+    requirement is reflected in the dependency tree.
+  - TODO(JOI_ALIGNMENT): on the first PR that adds a typeORM entity,
+    verify a matching Joi schema exists with identical field-level
+    constraints (required-ness, length, regex, format).
   - TODO(FUNCTIONAL_REVIEW): on first PR, verify no class-based
     service / controller / domain-model code is introduced; the only
     allowed classes are framework-mandated (typeORM entities, Joi
-    schema helpers where required, error subclasses where appropriate).
+    schema helpers where required, error subclasses where
+    appropriate).
 -->
 
 # pvt-edu-admin-project Constitution
@@ -203,9 +246,10 @@ satisfy three properties:
    documented (TSDoc or equivalent) when their meaning is not obvious
    from the type alone.
 2. **Reusable.** No feature-specific hard-coding (no `Teacher` field
-   names baked into a "Form" component). Composed from generic SGDS
-   v3 primitives and shared form/table helpers rather than re-
-   implementing them per page.
+   names baked into a "Form" component). Composed from generic
+   **Ant Design** primitives and styled with **Tailwind CSS**
+   utility classes (see Technical Stack Constraints) rather than
+   re-implementing them per page.
 3. **Simple.** No abstractions ahead of the current requirement
    (Principle V applies here too). If a component needs three layers
    of indirection to render one button, it is the wrong component.
@@ -260,12 +304,28 @@ amendment to enter scope):
   or query builders, not in business code.
 - **Frontend**: **Next.js** with the **App Router**, using **client
   components** (client-side rendering is the default for this project).
-- **UI components**: the **Singapore Government Design System v3 (SGDS v3)**
-  is the required component library for the active feature. Third-party
-  UI deps require justification in `plan.md` and a Complexity Tracking
-  entry. The exact `@govtechsg/sgds-react` (or equivalent) package version
-  is pinned in `package.json` at the first frontend task — see TODO in the
-  Sync Impact Report.
+- **UI components**: **Ant Design (`antd`)** is the required component
+  library for the active feature. Every interactive control (button,
+  input, select, table, modal, form, etc.) MUST be composed from `antd`
+  primitives — third-party UI deps in addition to `antd` require
+  justification in `plan.md` and a Complexity Tracking entry. The
+  exact `antd` package version is pinned in `package.json` at the
+  first frontend task — see TODO(ANTD_TAILWIND_VERSION) in the Sync
+  Impact Report.
+- **Styling**: **Tailwind CSS** is the required styling solution for
+  the active feature. All visual presentation — layout, spacing,
+  colour, typography, responsive behaviour — MUST be expressed via
+  Tailwind utility classes (in JSX `className`, or template strings
+  consumed by Tailwind's content scanner) rather than hand-written
+  CSS files, inline `style` objects, or per-component CSS modules,
+  except where Ant Design's documented escape hatches (e.g. `ConfigProvider`
+  token overrides) require it. The Tailwind config
+  (`tailwind.config.*`) is the single place where project tokens
+  (colour palette, font stack, breakpoints, spacing scale) are
+  defined; component code MUST reference those tokens via utility
+  classes, not raw hex values or one-off class names. The exact
+  `tailwindcss`, `postcss`, and `autoprefixer` package versions are
+  pinned in `package.json` at the first frontend task.
 - **Validation**: **Joi** schemas (Principle VII), aligned field-for-field
   with the typeORM entity columns.
 - **Delivery**: the application MUST run in a **Docker** container, and
@@ -324,4 +384,4 @@ amendment to enter scope):
   the authoritative process guidance is the Spec Kit skill documentation
   under `.claude/skills/speckit-*`.
 
-**Version**: 2.2.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-18
+**Version**: 2.3.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-19
