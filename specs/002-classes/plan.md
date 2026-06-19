@@ -32,11 +32,12 @@ client pages, and the form-teacher lookup logic.
 
 **Runtime**: Node.js LTS (current) via the **same single Next.js 15 application** as `001-teachers` — the Constitution's "one process" rule means the API and UI for both features live in the same Next.js codebase. The Classes feature is a new set of routes and pages inside the existing `app/` tree, not a separate application.
 
-**Primary Dependencies**: same as `001-teachers` (see [research.md §2.1](./research.md#21-stack-inheritance-from-001-teachers)):
+**Primary Dependencies**: same as `001-teachers` (see [research.md §2.1](./research.md#21-stack-inheritance-from-001-teachers)); reflects the constitution v2.3.0 amendment that swapped SGDS v3 for **Ant Design (`antd`)** + **Tailwind CSS** (see the `### Session 2026-06-19` clarification in [`spec.md`](./spec.md) and the v2.3.0 Sync Impact Report):
 - `next@^15`, `react@^19`, `react-dom@^19`
 - `typeorm@^0.3`, `mysql2@^3`
 - `joi@^17`
-- `@govtechsg/sgds-react@^3`
+- `antd@<pinned>` (replaces `@govtechsg/sgds-react@^3`)
+- `tailwindcss@<pinned>`, `postcss@<pinned>`, `autoprefixer@<pinned>`
 - `dotenv@^16`
 - `vitest` (dev)
 
@@ -90,14 +91,15 @@ New integration tests:
 | V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. No DTOs, no class-based service layers, no DI container. The Classes feature reuses the same `FormField`, `Button`, `EmptyState`, `ErrorState`, `LoadingState` components from `001-teachers`. |
 | VI. Functional-First (Classes Only When Necessary) | ✅ Pass | Same rule as `001-teachers`: the new route handlers are small modules of pure functions; the new React components are function components with hooks; the only new classes are the typeORM entity classes (`Class`, `Level`). |
 | VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Class` mirrors the typeORM entity column-for-column. The form-teacher email format uses the same `Joi.string().email({ tlds: false })` pattern as `001-teachers`. |
-| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | The new components (`ClassForm`, `ClassTable`) are function components with explicit typed props. The shared `FormField`, `Button`, `StateViews` from `001-teachers` are reused — no feature-specific hard-coding. The Form Teacher control is a `Select` composed from the shared `FormField` and the existing SGDS v3 `Dropdown` primitive. |
+| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | The new components (`ClassForm`, `ClassTable`) are function components with explicit typed props. The shared `FormField`, `Button`, `StateViews` from `001-teachers` are reused — no feature-specific hard-coding. The Form Teacher control is a `Select` composed from the shared `FormField` and the existing **Ant Design (`antd`)** `Select` primitive, styled with **Tailwind CSS** utility classes (per Constitution v2.3.0). |
 
 **Stage Scope compliance** (per Constitution → Stage Scope):
 - ✅ In scope: Classes UI Create + Read; backend `POST` + `GET` for Classes; `GET /api/levels` for the dropdown; data model for `classes` and `levels`.
 - ✅ Out of scope: Update/Delete on Classes, authentication, additional roles, additional entities, production deployment, observability — all not in the plan.
 
 **Constitution TODO items status**:
-- All `TODO(FEATURE_001)` items were resolved in the `001-teachers` plan (Vitest, docker-compose, SGDS v3 pin, Joi-alignment, functional-review). No new TODO items are introduced by this plan.
+- All `TODO(FEATURE_001)` items were resolved in the `001-teachers` plan (Vitest, docker-compose, Joi-alignment, functional-review).
+- The previous `TODO(SGDS_V3_PACKAGE)` is **superseded** by the constitution v2.3.0 amendment (SGDS v3 → Ant Design + Tailwind CSS). The new pin lives in `001-teachers/plan.md` Technical Context and is inherited by this feature (no new task needed here). The matching `TODO(ANTD_TAILWIND_VERSION)` is resolved at the project level by `001-teachers/T001` + `001-teachers/T012a`.
 - New item introduced by this plan: `TODO(FEATURE_002)` — confirm the `GET /api/classes` join performance against a real schema with N teachers and M classes (informal, dev-only). Documented in the quickstart as a manual check.
 
 No violations. No entries required in **Complexity Tracking**.
@@ -180,9 +182,9 @@ lib/
 └── config.ts                                        # (pre-existing)
 
 components/                                          # (pre-existing from 001-teachers)
-├── FormField.tsx                                    # (pre-existing) label + input + error slot
-├── Button.tsx                                       # (pre-existing)
-├── Select.tsx                                       # (+) wraps SGDS Dropdown with our variant logic
+├── FormField.tsx                                    # (pre-existing) label + input + error slot (antd Form.Item + Input, Tailwind styled)
+├── Button.tsx                                       # (pre-existing) (antd Button, Tailwind styled)
+├── Select.tsx                                       # (+) wraps antd Select with our variant logic (Tailwind styled)
 └── StateViews.tsx                                   # (pre-existing)
 
 tests/

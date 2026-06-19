@@ -23,13 +23,18 @@ schema rebuilt from a single repeatable command.
 
 **Runtime**: Node.js LTS (current) via a single Next.js 15 application. The UI lives under `app/`; the API lives under `app/api/` as Next.js Route Handlers. There is no separate Node HTTP service, Express/Fastify/NestJS app, or microservice in scope.
 
-**Primary Dependencies** (latest stable as of 2026-06-18):
+**Primary Dependencies** (latest stable as of 2026-06-19; reflects the
+constitution amendment that swapped SGDS v3 for Ant Design + Tailwind CSS —
+see `.specify/memory/constitution.md` v2.3.0 Sync Impact Report and the
+`### Session 2026-06-19` clarification in [`spec.md`](./spec.md)):
 - `next@^15` — framework (App Router, client components default)
 - `react@^19` and `react-dom@^19` — UI runtime (paired with Next 15)
 - `typeorm@^0.3` — data access (entities, repositories, migrations)
 - `mysql2@^3` — MySQL driver for typeORM
 - `joi@^17` — request validation (mirrors typeORM columns per Principle VII)
-- `@govtechsg/sgds-react@^3` — UI component library (per Constitution Technical Stack Constraints; satisfies Stage 1 requirement)
+- `antd@<pinned>` — UI component library (per Constitution v2.3.0 Technical Stack Constraints; satisfies Stage 1 requirement)
+- `tailwindcss@<pinned>` — utility-first CSS framework (per Constitution v2.3.0)
+- `postcss@<pinned>` and `autoprefixer@<pinned>` — Tailwind CSS build pipeline
 - `dotenv@^16` — runtime configuration loader
 
 **Storage**: MySQL 8.x running in a Docker container (per Constitution + Sync Impact Report). All persistence goes through typeORM entities, repositories, and migrations. Raw SQL is permitted only inside typeORM migrations, not in business code. Two tables are in scope for this feature: `teachers` and `subjects` (the latter shared with the Classes feature; see `003-backend-api-db`).
@@ -66,10 +71,10 @@ schema rebuilt from a single repeatable command.
 | II. TypeScript End-to-End (`strict: true`) | ✅ Pass | A single `tsconfig.json` covers the whole app; the API route handlers, the typeORM entities, the Joi schemas, the UI components, and the tests are all `.ts`; no `.js` source files. |
 | III. Unit Tests Required | ✅ Pass | Vitest is the runner (decided in [research.md §1.1](./research.md#11-unit-test-runner-vitest-vs-jest)). Unit tests cover every Joi schema (happy path + each rejection path) and the route handler. Integration tests use the MySQL container. |
 | IV. Single Role: Administrator | ✅ Pass | No auth, no roles, no session; the only user is the Administrator, matching the spec. |
-| V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. No DTOs, no repositories class wrappers, no service layer, no DI container. The smallest Next.js + typeORM + Joi + SGDS v3 setup that satisfies the spec. The "extra unknown fields" policy and any other low-impact decisions are deferred to the `simplify` skill if they come up at implementation time. |
+| V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. No DTOs, no repositories class wrappers, no service layer, no DI container. The smallest Next.js + typeORM + Joi + Ant Design + Tailwind setup that satisfies the spec. The "extra unknown fields" policy and any other low-impact decisions are deferred to the `simplify` skill if they come up at implementation time. |
 | VI. Functional-First (Classes Only When Necessary) | ✅ Pass | Server code is small modules of pure functions (`lib/validation/*.ts`, `lib/api/response.ts`, `app/api/*/route.ts`). React code uses function components and hooks. The only classes are typeORM entity classes (framework-mandated). |
 | VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Teacher` mirrors the typeORM entity column-for-column (same required-ness, same length bounds, same regex). `Joi.string().email().required()`, `Joi.string().pattern(/^[89]\d{7}$/).required()` for contact, `Joi.string().valid(...).required()` for subject. |
-| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | UI components are function components, named after their role (`TeacherForm`, `TeacherTable`, `FormField`, `EmptyState`, `ErrorState`, `LoadingState`), with explicit typed props. Composed from SGDS v3 primitives and shared form/table helpers — no feature-specific hard-coding. No three-layer indirection to render one button. |
+| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | UI components are function components, named after their role (`TeacherForm`, `TeacherTable`, `FormField`, `EmptyState`, `ErrorState`, `LoadingState`), with explicit typed props. Composed from **Ant Design (`antd`)** primitives and styled with **Tailwind CSS** utility classes (per Constitution v2.3.0) — no feature-specific hard-coding. No three-layer indirection to render one button. |
 
 **Stage Scope compliance** (per Constitution → Stage Scope):
 - ✅ In scope: Teachers UI Create + Read; backend `POST` + `GET` for Teachers; data model for `teachers` and `subjects`.
@@ -78,7 +83,7 @@ schema rebuilt from a single repeatable command.
 **Constitution TODO items resolved by this plan** (per `.specify/memory/constitution.md` Sync Impact Report):
 - `TODO(FEATURE_001)`: unit-test runner — **resolved**: Vitest (see [research.md §1.1](./research.md#11-unit-test-runner-vitest-vs-jest)).
 - `TODO(FEATURE_001)`: container layout — **resolved**: `docker compose` with two services (`app`, `mysql`) (see [research.md §1.2](./research.md#12-container-layout-dockerfile-vs-docker-compose)).
-- `TODO(SGDS_V3_PACKAGE)`: pin the `@govtechsg/sgds-react` version — **resolved**: `^3` in `package.json` (see [research.md §1.3](./research.md#13-sgds-v3-package-version-pin)).
+- `TODO(SGDS_V3_PACKAGE)`: pin the `@govtechsg/sgds-react` version — **superseded** by the constitution amendment (v2.2.0 → v2.3.0): the UI library is now **Ant Design (`antd`)** and the styling solution is **Tailwind CSS** (see new `TODO(ANTD_TAILWIND_VERSION)` below and the `### Session 2026-06-19` clarification in [`spec.md`](./spec.md)). The new pin lives in `package.json` (see [research.md §1.3](./research.md#13-ui-library-and-styling-version-pin)).
 - `TODO(JOI_ALIGNMENT)`: on first PR that adds a typeORM entity, verify a matching Joi schema exists — **resolved**: enforced by an architectural rule (Joi schema lives next to the entity, both are imported in the route handler; PR review checklist in `README.md`).
 - `TODO(FUNCTIONAL_REVIEW)`: verify no class-based service / controller / domain-model code — **resolved**: enforced by a code-review rule (no `class` keyword in `app/`, `lib/`, or `components/`, except the `typeorm` `Entity` decorated classes).
 
@@ -106,7 +111,7 @@ specs/001-teachers/
 
 ```text
 app/
-├── layout.tsx                       # Root layout, loads SGDS v3 styles, applies theming
+├── layout.tsx                       # Root layout, loads Ant Design reset CSS + Tailwind globals
 ├── page.tsx                         # Home — redirects to /teachers
 ├── teachers/
 │   ├── page.tsx                     # Teachers list screen (client component)
@@ -143,8 +148,8 @@ lib/
 └── config.ts                        # reads process.env, validates with Joi at boot
 
 components/                          # Shared, feature-agnostic UI primitives
-├── FormField.tsx                    # label + input + error slot, composed with SGDS Input
-├── Button.tsx                       # wraps SGDS Button with our variant logic
+├── FormField.tsx                    # label + input + error slot, composed with antd Form.Item + Input
+├── Button.tsx                       # wraps antd Button with our variant logic
 └── StateViews.tsx                   # EmptyState, ErrorState, LoadingState (generic)
 
 tests/
@@ -176,7 +181,7 @@ vitest.config.ts                     # unit + contract + integration
 README.md                            # contract: how to run, assumptions, links
 ```
 
-**Structure Decision**: Single Next.js application (per Constitution: "The application is one process"). The structure follows the Constitution's "UI under `app/`, API under `app/api/`" rule. `lib/` holds the cross-cutting pure-function modules (validation, API helpers, DB entities, migrations). `components/` holds feature-agnostic UI primitives that wrap SGDS v3. `tests/` mirrors the layered test strategy (unit, contract, integration). Docker files live in `docker/` and are referenced by the root `docker compose` invocation. The plan is silent on the placement of `.requirements/Full Stack Assignment.md` because the file is not present in the repo (a missing-asset notice is in [research.md §1.6](./research.md#16-missing-requirements-asset)).
+**Structure Decision**: Single Next.js application (per Constitution: "The application is one process"). The structure follows the Constitution's "UI under `app/`, API under `app/api/`" rule. `lib/` holds the cross-cutting pure-function modules (validation, API helpers, DB entities, migrations). `components/` holds feature-agnostic UI primitives that wrap **Ant Design (`antd`)** and are styled with **Tailwind CSS** utility classes. `tests/` mirrors the layered test strategy (unit, contract, integration). Docker files live in `docker/` and are referenced by the root `docker compose` invocation. The plan is silent on the placement of `.requirements/Full Stack Assignment.md` because the file is not present in the repo (a missing-asset notice is in [research.md §1.6](./research.md#16-missing-requirements-asset)).
 
 ## Complexity Tracking
 

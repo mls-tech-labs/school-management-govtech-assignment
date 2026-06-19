@@ -78,31 +78,61 @@ Impact Report ("in plan.md → Technical Context, decide the container layout").
 
 ---
 
-## 1.3. SGDS v3 package version pin
+## 1.3. UI library and styling version pin (Ant Design + Tailwind CSS)
 
-**Decision**: **`@govtechsg/sgds-react@^3`** in `package.json` (latest 3.x as of
-2026-06-18).
+**Decision**: **`antd@<pinned>`** + **`tailwindcss@<pinned>`** +
+**`postcss@<pinned>`** + **`autoprefixer@<pinned>`** in `package.json`
+(latest stable as of 2026-06-19).
 
 **Rationale**:
-- The Constitution's Technical Stack Constraints require the **Singapore Government
-  Design System v3 (SGDS v3)** as the component library. The TypeScript React
-  package is `@govtechsg/sgds-react` and the major version tracks the SGDS design
-  system version.
-- Pinning to `^3` (caret) gets the latest 3.x and any 3.x.y patch but blocks a
-  jump to 4.x — which would be a design-system upgrade, not a routine update.
-- The exact version at install time is recorded in `package-lock.json`; the caret
-  in `package.json` gives reproducible builds via the lockfile.
+- The Constitution (v2.3.0, amendment 2026-06-19) Technical Stack Constraints
+  require **Ant Design (`antd`)** as the component library and **Tailwind CSS**
+  as the styling solution. This supersedes the previous requirement for SGDS v3
+  (see the v2.2.0 → v2.3.0 Sync Impact Report and the
+  `### Session 2026-06-19` clarification in [`spec.md`](./spec.md)).
+- `antd` is the de-facto React UI component library in the wider React
+  ecosystem, has comprehensive TypeScript types, ships its own reset CSS
+  (`antd/dist/reset.css`), and matches the requirements file's
+  explicit example ("Utilising 3rd party libraries (e.g., Ant Design or
+  Material UI) is allowed").
+- **Tailwind CSS** is the utility-first CSS framework required by the
+  Constitution for visual presentation (layout, spacing, colour, typography,
+  responsive behaviour). Tokens (colour palette, font stack, breakpoints,
+  spacing scale) live in `tailwind.config.*` and are referenced from JSX
+  `className` via utility classes — no hand-written CSS, no inline `style`
+  objects, no per-component CSS modules except where `antd`'s documented
+  escape hatches (e.g. `ConfigProvider` token overrides) require it.
+- Pinning to caret ranges (`^x.y.z`) for `antd` and `tailwindcss` gets the
+  latest minor + patch and blocks a major-version jump — which would be a
+  design-system upgrade, not a routine update. The exact versions are
+  recorded in `package-lock.json` for reproducible builds.
+- `postcss` + `autoprefixer` are Tailwind's build pipeline; both pinned to
+  the versions `tailwindcss` documents as compatible.
 
 **Alternatives considered**:
-- **Exact pin (`3.4.7` etc.)** — no auto-updates. Rejected because (a) we want
-  patch updates without a manual `npm install` edit, and (b) the lockfile already
-  pins the exact version.
+- **Material UI (`@mui/material`)** — a comparable React component library
+  with its own theming system. Rejected because the original requirements
+  file names "Ant Design or Material UI" as examples; we choose the one
+  the example lists first, and Ant Design's component model (`Form.Item`,
+  `Table`, `Select` with `options`) maps more directly onto the
+  forms/tables the spec calls for.
+- **Chakra UI / Mantine / Radix** — equally capable React UI libraries.
+  Rejected to keep the dependency surface small (Principle V — Simplicity)
+  and because none of them are named in the requirements file.
+- **Plain CSS / CSS Modules / styled-components** for styling instead of
+  Tailwind. Rejected by the Constitution v2.3.0 (the Styling line in
+  Technical Stack Constraints names Tailwind CSS as the required
+  solution).
+- **Exact pin (e.g. `5.21.6`)** — no auto-updates. Rejected because we want
+  patch updates without a manual `npm install` edit, and the lockfile
+  already pins the exact version.
 - **Open range (`"latest"`)** — never reproducible. Rejected.
-- **`@govtechsg/sgds` (the older non-React package)** — not maintained for
-  the v3 design system.
+- **Reverting to `@govtechsg/sgds-react@^3`** — explicitly the prior
+  decision; superseded by the constitution amendment.
 
-**TODO closure**: This resolves the `TODO(SGDS_V3_PACKAGE)` in the Constitution's
-Sync Impact Report.
+**TODO closure**: This supersedes the prior `TODO(SGDS_V3_PACKAGE)` and
+introduces `TODO(ANTD_TAILWIND_VERSION)` in the Constitution's Sync
+Impact Report.
 
 ---
 

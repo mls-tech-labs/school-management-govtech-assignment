@@ -14,6 +14,10 @@
 - Q: Should `415 Unsupported Media Type` and `503 Service Unavailable` be in the cross-cutting API contract? → A: Yes — both stay in `003` and are **propagated to `001-teachers` and `002-classes`** so the three specs share a single status-code table. The full mapping is `400` (validation) / `404` (teacher not found, classes only) / `409` (uniqueness / referential integrity) / `415` (request `Content-Type` is not `application/json`) / `500` (unhandled server failure) / `503` (data store briefly unreachable). `001` and `002` are updated to match.
 - Q: How is the seed data for `subjects` and `levels` populated? → A: Second migration (separate from the schema migration) that idempotently inserts the seed list. The seed list is inside the version-controlled migration set, runs alongside the schema migration on `docker compose up`, and is idempotent on subsequent boots. No separate `npm run seed` step, no boot-time seeder, no manual SQL file.
 
+### Session 2026-06-19
+
+- Q: Constitution v2.2.0 → v2.3.0 amendment swaps SGDS v3 (`@govtechsg/sgds-react`) for **Ant Design (`antd`)** + **Tailwind CSS** — does this cross-cutting spec need any change? → A: This spec (003) owns the cross-cutting **API contract, error envelope, status-code table, migration-set ordering, and reference-list seed pattern** — it has no UI of its own. Therefore the amendment requires **no functional change** to this spec. The amendment is propagated by reference: the API responses 003 defines (`{ "data": [...] }` for lists, `{ "error": "..." }` for errors, status code table `400 / 404 / 409 / 415 / 500 / 503`) are consumed by the `001-teachers` and `002-classes` UI layers, which are now composed from `antd` primitives styled with Tailwind utility classes. Each per-feature spec records a matching `### Session 2026-06-19` clarification capturing the UI-side translation; this 003 spec records the cross-cutting note so the audit trail is complete in one place. The Assumptions section is updated to call out the constitution version that the consumers are expected to be conformant with.
+
 ## User Scenarios & Testing *(mandatory)*
 
 This feature is an internal, cross-cutting capability. The "user" is the rest of
@@ -422,3 +426,12 @@ code mapping.
   for either table is in scope. Admin authoring of reference-list
   entries is a future-stage amendment (see `001-teachers/spec.md` and
   `002-classes/spec.md` Clarifications, Session 2026-06-18).
+- The API responses this spec defines (`{ "data": [...] }` for lists,
+  `{ "error": "..." }` for errors, status code table) are the cross-cutting
+  contract that the `001-teachers` and `002-classes` UI layers consume.
+  Per the constitution v2.3.0 amendment (2026-06-19), the UI layers are
+  conformant with the constitution's current Technical Stack Constraints
+  (the specific UI library and styling solution are named in the
+  constitution, not in this spec); the API contract itself is unchanged.
+  See `001-teachers/spec.md` and `002-classes/spec.md` Clarifications,
+  Session 2026-06-19, for the per-feature translation of the amendment.

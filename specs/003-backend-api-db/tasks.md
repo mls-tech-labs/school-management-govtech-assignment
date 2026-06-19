@@ -37,7 +37,7 @@
 
 **Purpose**: Confirm that the 001-teachers project skeleton (dependencies, env, test runner, container layout) already covers 003's needs — no new setup tasks are required. 003 adds **zero new dependencies**, **zero new endpoints**, **zero new tables**.
 
-- [ ] T001 [P] Verify `package.json`, `.env.example`, `vitest.config.ts` from `001-teachers` are sufficient for 003 — confirm next@^15, react@^19, typeorm@^0.3, mysql2@^3, joi@^17, dotenv@^16, vitest are present and no new entries are needed
+- [ ] T001 [P] Verify `package.json`, `.env.example`, `vitest.config.ts` from `001-teachers` are sufficient for 003 — confirm the full dep set is present: `next@^15`, `react@^19`, `react-dom@^19`, `typeorm@^0.3`, `mysql2@^3`, `joi@^17`, `dotenv@^16`, `antd@<pinned>`, `tailwindcss@<pinned>`, `postcss@<pinned>`, `autoprefixer@<pinned>`, `vitest` (the antd + Tailwind packages are inherited from `001-teachers/T001` per the constitution v2.3.0 amendment; 003 adds no new entries of its own)
 - [ ] T002 [P] Verify `docker/Dockerfile` and `docker/docker-compose.yml` from `001-teachers` include a migration:run hook on first boot — amend if missing so the four typeORM migrations run before `next start`
 
 **Checkpoint**: Project skeleton confirmed — no setup work needed for 003.
@@ -137,7 +137,11 @@
 
 - [ ] T025 [P] Update root `README.md` with the 003 status-code table — link to `lib/api/README.md` from T021 and add a one-paragraph "Cross-cutting API contract" section that names `withApiContract` and `toApiError` as the two enforcement points
 - [ ] T026 [P] Run `/speckit-analyze` for cross-artifact consistency — verify `spec.md` ↔ `plan.md` ↔ `tasks.md` ↔ `contracts/` agree on the status-code table, the four migrations, the four endpoints, the 5 unique/FK constraints, and the success / error response shapes
-- [ ] T027 [P] Constitution compliance review (Principles II, VI, VII) — confirm `strict: true` is on in `tsconfig.json` for `lib/api/route.ts` and `lib/api/db-error.ts`; confirm no class-based code was introduced outside the typeORM entities (the helpers are pure functions); confirm the existing Joi schemas from `001-teachers` / `002-classes` are unchanged and still mirror the contract fields
+- [ ] T027 [P] Constitution compliance review (Principles II, VI, VII, **VIII** consumer-side) — confirm:
+  - **II. TypeScript End-to-End**: `strict: true` is on in `tsconfig.json` for `lib/api/route.ts` and `lib/api/db-error.ts`; no `.js` source files
+  - **VI. Functional-First**: no class-based code was introduced outside the typeORM entities (the helpers are pure functions)
+  - **VII. Joi Schema Validation**: the existing Joi schemas from `001-teachers` / `002-classes` are unchanged and still mirror the contract fields
+  - **VIII. UI Quality (consumer-side)**: 003 introduces no UI of its own; the consumer UI layers (001/002) are now composed from `antd` primitives and styled with Tailwind CSS utility classes per the constitution v2.3.0 amendment — verify by inspection of the merged `components/Button.tsx`, `components/Select.tsx`, `components/FormField.tsx` (all from `001-teachers`) and `app/layout.tsx` (`<ConfigProvider>` + Tailwind `globals.css`); the Form Teacher searchable dropdown in `002-classes` is built on the shared antd-based `Select`
 - [ ] T028 [P] Run the 13 quickstart scenarios from `specs/003-backend-api-db/quickstart.md` end-to-end — error envelope, 415 gate, unknown reference, DB integrity, schema rebuild, migration idempotency, persistence, race-safety, atomic write, cross-feature consistency, reference-list response, unit tests, integration tests
 - [ ] T029 [P] Verify the four typeORM migrations run in the expected order on first boot — start a clean `docker compose up`, capture the migration log, assert the order is `InitSchema` → `SeedSubjects` → `InitClasses` → `SeedLevels`; add an assertion to `tests/integration/migration.spec.ts` (extend T020) that re-runs the migrations on a populated DB and asserts the operation is a no-op (FR-016, FR-017)
 - [ ] T030 [P] Add a `db:rebuild` script to `package.json` — `"db:rebuild": "typeorm-ts-node-commonjs schema:drop -d lib/db/data-source.ts && typeorm-ts-node-commonjs migration:run -d lib/db/data-source.ts"`; used by `tests/integration/migration.spec.ts` (T020) and as a developer convenience for the SC-006 quickstart scenario

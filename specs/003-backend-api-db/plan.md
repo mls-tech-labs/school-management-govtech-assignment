@@ -48,12 +48,12 @@ and inside `lib/api/` (the error-envelope and DB-error helpers).
 
 **Primary Dependencies**: same as `001-teachers` and `002-classes` (see
 [research.md §3.8](./research.md#38-cross-cutting-dependency-on-001-teachers-and-002-classes)).
-No new dependencies. Specifically:
-- `next@^15`, `react@^19`, `react-dom@^19`
-- `typeorm@^0.3`, `mysql2@^3`
-- `joi@^17`
-- `dotenv@^16`
-- `vitest` (dev)
+No new dependencies. The full set — including the `antd`, `tailwindcss`,
+`postcss`, and `autoprefixer` packages added by `001-teachers/T001` per the
+constitution v2.3.0 amendment (SGDS v3 → Ant Design + Tailwind CSS) — is
+enumerated in
+[`001-teachers/plan.md` Primary Dependencies](../001-teachers/plan.md#technical-context).
+003 inherits them transitively; it adds zero of its own.
 
 **Storage**: same MySQL 8 container as `001-teachers`. The 003 feature
 adds **no new tables**; it owns the *cross-cutting* constraints and
@@ -138,14 +138,14 @@ negligible.
 | V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. The cross-cutting helpers are 3 small modules of pure functions (`route.ts`, `response.ts`, `db-error.ts`). The `withApiContract` wrapper is ~15 lines. The DB-error mapper is a single `switch`. The contract files are 5 YAML files. No DTOs, no class-based service layers, no DI container. |
 | VI. Functional-First (Classes Only When Necessary) | ✅ Pass | Same rule as `001-teachers` / `002-classes`: the new route-handler wrapper is a pure function; the new helpers are pure functions; the only classes are the typeORM entity classes (already present from `001` / `002`). 003 introduces zero new class-based code. |
 | VII. Joi Schema Validation | ✅ Pass | The 003 plan does not introduce new request shapes. The existing Joi schemas from `001-teachers` (`teacher.ts`) and `002-classes` (`class.ts`) continue to enforce FR-004 / FR-005 / FR-006 / FR-007. The `withApiContract` wrapper does NOT bypass Joi — it only adds the content-type gate and the unhandled-rejection guard. |
-| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | 003 introduces no new UI. The 001 and 002 UI components are unaffected. |
+| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | 003 introduces no new UI. The 001 and 002 UI components are now composed from `antd` primitives and styled with Tailwind CSS utility classes per the constitution v2.3.0 amendment (see [`001-teachers/plan.md` Principle VIII row](../001-teachers/plan.md#constitution-check) and [`002-classes/plan.md` Principle VIII row](../002-classes/plan.md#constitution-check) for the per-feature translation; the Session 2026-06-19 clarifications in each `spec.md` are the audit trail). |
 
 **Stage Scope compliance** (per Constitution → Stage Scope):
 - ✅ In scope: Backend APIs (`POST` + `GET` for Teachers, Classes; `GET` for Subjects, Levels); data model for `teachers`, `classes`, `subjects`, `levels` (the data-model is already created by `001` / `002` — 003 owns the cross-cutting view).
 - ✅ Out of scope: Update/Delete, authentication, additional roles, additional entities, production deployment, observability — all not in the plan.
 
 **Constitution TODO items status**:
-- All `TODO(FEATURE_001)` items were resolved in the `001-teachers` plan (Vitest, docker-compose, SGDS v3 pin, Joi-alignment, functional-review). No new TODO items are introduced by this plan.
+- All `TODO(FEATURE_001)` items were resolved in the `001-teachers` plan (Vitest, docker-compose, `TODO(ANTD_TAILWIND_VERSION)` replacing the prior `TODO(SGDS_V3_PACKAGE)` per the constitution v2.3.0 amendment, Joi-alignment, functional-review). No new TODO items are introduced by this plan.
 - New item introduced by this plan: `TODO(FEATURE_003)` — formalise the contract test suite (every status code in the cross-cutting table is exercised by an automated contract test). Tracked in `tasks.md`.
 
 No violations. No entries required in **Complexity Tracking**.

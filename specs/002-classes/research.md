@@ -17,8 +17,11 @@ cross-references the inherited ones.
 ## 2.1. Stack inheritance from 001-teachers
 
 **Decision**: Reuse the 001-teachers stack as-is — same Next.js 15, same
-typeORM 0.3, same MySQL 8, same Joi 17, same SGDS v3, same Vitest, same
-docker-compose layout. No new npm dependencies.
+typeORM 0.3, same MySQL 8, same Joi 17, same **Ant Design (`antd`)** +
+**Tailwind CSS** (constitution v2.3.0 amendment supersedes the prior SGDS v3
+choice), same Vitest, same docker-compose layout. No new npm dependencies
+for this feature (the `antd` / `tailwindcss` / `postcss` / `autoprefixer`
+packages are added by 001-teachers/T001 and inherited).
 
 **Rationale**:
 - The Constitution's Principle V (Simplicity) says "no dependencies added
@@ -33,14 +36,14 @@ docker-compose layout. No new npm dependencies.
   pulled from the DB at boot.
 - The same shared UI components (`FormField`, `Button`, `StateViews`)
   are reused; the only new component is `Select`, a thin wrapper around
-  the SGDS v3 `Dropdown` primitive that already exists in the dependency
-  tree.
+  the `antd` `Select` primitive that already exists in the dependency
+  tree, styled with Tailwind CSS utility classes.
 
 **Cross-references** (decisions made in the 001-teachers plan and
 inherited here without re-deriving):
 - Unit-test runner: Vitest ([001-teachers research.md §1.1](../001-teachers/research.md#11-unit-test-runner-vitest-vs-jest))
 - Container layout: docker-compose with 2 services ([001-teachers research.md §1.2](../001-teachers/research.md#12-container-layout-dockerfile-vs-docker-compose))
-- SGDS v3 version pin: `^3` ([001-teachers research.md §1.3](../001-teachers/research.md#13-sgds-v3-package-version-pin))
+- UI library and styling version pin: Ant Design + Tailwind CSS ([001-teachers research.md §1.3](../001-teachers/research.md#13-ui-library-and-styling-version-pin-ant-design--tailwind-css))
 - typeORM 0.3 + mysql2 ([001-teachers research.md §1.4](../001-teachers/research.md#14-data-access-typeorm-version--driver))
 - Joi 17 ([001-teachers research.md §1.5](../001-teachers/research.md#15-validation-library-joi-vs-zod-vs-class-validator))
 - Missing requirements file: not blocking ([001-teachers research.md §1.6](../001-teachers/research.md#16-missing-requirements-asset))
@@ -319,8 +322,11 @@ feature adds **zero** new runtime dependencies. The dependency list in
 the 001-teachers plan; everything in the `app/classes/*`,
 `app/api/classes/*`, `app/api/levels/*`, `lib/validation/class.ts`,
 `lib/db/entities/Class.ts`, and `lib/db/entities/Level.ts` files is written
-against the already-installed packages.
+against the already-installed packages (including the
+`antd` / `tailwindcss` / `postcss` / `autoprefixer` packages introduced
+by 001-teachers per the constitution v2.3.0 amendment).
 
-If a future implementation step finds a gap (e.g., a specific SGDS v3
-component that's missing), the gap is raised as a Complexity Tracking
-entry, not as a silent dependency addition.
+If a future implementation step finds a gap (e.g., a specific `antd`
+component that's missing or a Tailwind utility that doesn't cover a
+required style), the gap is raised as a Complexity Tracking entry, not
+as a silent dependency addition.

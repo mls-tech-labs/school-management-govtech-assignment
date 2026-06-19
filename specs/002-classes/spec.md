@@ -15,6 +15,10 @@
 - Q: Pagination for the Classes list? → A: No pagination in Stage 1. The GET endpoint returns the full list of classes in a single `{ "data": [...] }` response. The Stage 1 upper bound is ≤ 500 classes (see Assumptions); pagination is a future-stage amendment if the school outgrows that bound. This mirrors the `001-teachers` decision for API consistency.
 - Q: What is the primary key of a `Class`? → A: Surrogate auto-increment `id`. The DB column is numeric and auto-generated; `name` carries a separate `UNIQUE` index (the one FR-005c adds). The `id` is **not** exposed in the Stage 1 API response (edit/delete are out of Stage 1 scope per the constitution), but the column exists so a future edit/delete endpoint can route by it without a schema migration.
 
+### Session 2026-06-19
+
+- Q: Constitution v2.2.0 → v2.3.0 amendment swaps SGDS v3 (`@govtechsg/sgds-react`) for **Ant Design (`antd`)** + **Tailwind CSS** — how does that apply to this feature's UI? → A: This feature inherits the dependency set from `001-teachers` (per [plan.md Primary Dependencies](./plan.md#technical-context) and [research.md §2.1](./research.md#21-stack-inheritance-from-001-teachers)). The new `antd` + Tailwind dependency entries are added by `001-teachers/T001` + `001-teachers/T012a`; the Classes feature needs no additional install tasks. The functional behaviour of the Classes feature is unchanged: the same two user stories, the same FR-001..FR-012, the same SC-001..SC-006, the same Figma layout intent. The Form Teacher searchable dropdown (the new `components/Select.tsx` from T018) is composed from the `antd` `Select` primitive with `showSearch` and is styled with Tailwind utility classes — the only functional difference is the underlying primitive and the styling approach. The FK and migration set are unaffected.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Add a New Class with a Form Teacher (Priority: P1)
