@@ -1,21 +1,3 @@
-# Docker Compose for the Private Education Admin project.
-#
-# Brings up the MySQL 8 data store used by the Teachers and Classes features.
-# The schema and reference-list seeds are bootstrapped from
-# ./mysql/init/01-schema-and-seed.sql on the first run (the script is idempotent
-# and runs every time the container starts with an empty /var/lib/mysql).
-#
-# Usage:
-#   docker compose -f docker/docker-compose.yml up -d
-#   docker compose -f docker/docker-compose.yml down            # stop + remove containers
-#   docker compose -f docker/docker-compose.yml down -v         # stop + remove containers AND the named volume (wipes the DB)
-#
-# Environment:
-#   MYSQL_ROOT_PASSWORD  - root password (default below). Override via your shell or a .env file
-#                          next to this compose file. The .env at the repo root is JSON model-config
-#                          and is NOT used by compose for variable substitution.
-#   MYSQL_PORT           - host port to expose MySQL on (default 3306).
-
 name: pvt-edu-admin
 
 services:
@@ -30,7 +12,7 @@ services:
     environment:
       MYSQL_ROOT_HOST: "%"
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-admin}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-edu_inst}
     ports:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
@@ -51,6 +33,33 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pvt-edu-app
+    restart: unless-stopped
+    # Per `specs/003-backend-api-db/spec.md` FR-016 (Session 2026-06-21),
+    # there is NO `migration` one-shot service and NO `migration:run` step
+    # on boot. The MySQL schema, audit columns, `ulid` columns, FK
+    # constraints, UNIQUE indexes, and the `subjects` / `levels`
+    # reference-list seed data are all created by the user against the
+    # user-prepared MySQL container (mirrored in
+    # `docker/mysql/init/01-schema-and-seed.sql`). The app is read/write
+    # at runtime only — it connects to the existing MySQL.
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: admin
+      DB_PASSWORD: rootpass
+      DB_NAME: edu_inst
+      PORT: 3000
+    ports:
+      - "${PORT:-3000}:3000"
 
 volumes:
   mysql_data:

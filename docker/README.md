@@ -10,8 +10,8 @@ project's 4 tables and reference-list seeds already in place:
 
 - `subjects` — 9 rows (English, Mathematics, Science, Chinese, Malay, Tamil, Art, Music, Physical Education)
 - `levels`   — 10 rows (Primary 1–6, Secondary 1–4)
-- `teachers` — empty (created via `POST /api/teachers`)
-- `classes`  — empty (created via `POST /api/classes`)
+- `teachers` — empty (created via `POST /api/v1.0/teachers`)
+- `classes`  — empty (created via `POST /api/v1.0/classes`)
 
 Schema name: `admin`. Default root password: `rootpass` (override via
 `MYSQL_ROOT_PASSWORD` env var).
@@ -52,13 +52,17 @@ so this script is safe to run on a populated database — matches the
 
 The schema in `mysql/init/01-schema-and-seed.sql` mirrors
 `specs/001-teachers/data-model.md` and `specs/002-classes/data-model.md`
-exactly. When those specs change, update both this file **and** the typeORM
-migrations (`lib/db/migrations/*`) so the two stay in lockstep.
+exactly. When those specs change, update this SQL file to keep them in
+lockstep.
 
-`specs/003-backend-api-db/spec.md` FR-017 says the canonical mechanism is
-typeORM migrations, not a manual SQL file. This file exists to bootstrap the
-DB before the app code is written; once `lib/db/migrations/` ships, treat the
-migrations as authoritative and keep this file as a developer convenience.
+Per `specs/003-backend-api-db/spec.md` FR-016 (Session 2026-06-21), the
+typeORM migrations path (`lib/db/migrations/`, `typeorm-ts-node-commonjs
+migration:run`, the `migration` one-shot service in `docker-compose.yml`,
+and the `migration:run` / `migration:revert` / `db:rebuild` npm scripts)
+are all **removed from Stage 1**. The user-prepared MySQL container owns
+the schema — the application is read/write at runtime only. This SQL file
+is therefore the canonical source of truth for the Stage 1 schema, not a
+"bootstrap until the app code is written" placeholder.
 
 ## Reference values
 

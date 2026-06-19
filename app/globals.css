@@ -1,0 +1,47 @@
+/* Tailwind directives — must come first so the @layer rules below
+   extend the generated utility classes (per Constitution v2.3.0,
+   Technical Stack Constraints, "Styling" line). */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    @apply p-0 m-0 font-sans;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary-600;
+  }
+}
+
+@layer components {
+  /* Layout primitives used across the Teachers and Classes pages.
+     Per Constitution v2.3.0, these are expressed as Tailwind utility
+     compositions; component code references the same tokens via
+     `className`. */
+  .container-page {
+    @apply max-w-container mx-auto px-4;
+  }
+
+  .card {
+    @apply bg-surface border border-surface-border rounded-card shadow-card p-6;
+  }
+
+  .field-error {
+    @apply text-danger text-sm mt-1;
+  }
+
+  .form-level-error {
+    @apply text-danger text-sm mt-4;
+  }
+}

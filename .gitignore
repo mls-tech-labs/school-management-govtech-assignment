@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Test / coverage
+coverage/
+*.lcov
+
+# TypeORM build cache
+tmp/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local environment
+.env
+.env.local
+.env*.local
+
+# Docker MySQL volume (host-mounted data dir)
+docker/mysql/data/
+
+# tsbuildinfo
+*.tsbuildinfo
+next-env.d.ts

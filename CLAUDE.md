@@ -75,7 +75,50 @@ shell commands, and other important information, read the current plan:
 - Contracts: `specs/003-backend-api-db/contracts/common.yaml`, `specs/003-backend-api-db/contracts/teachers.yaml`, `specs/003-backend-api-db/contracts/classes.yaml`, `specs/003-backend-api-db/contracts/subjects.yaml`, `specs/003-backend-api-db/contracts/levels.yaml`
 
 Related specs:
-- `specs/003-backend-api-db/spec.md` (this feature — cross-cutting contract owner: error envelope, status-code table, migration-set ordering, reference-list seed pattern)
-- `specs/001-teachers/spec.md` (dependency: 003 owns the cross-cutting contract that 001's POST/GET /api/teachers + GET /api/subjects conform to; 001 owns the `teachers` and `subjects` schema and migrations)
-- `specs/002-classes/spec.md` (dependency: 003 owns the cross-cutting contract that 002's POST/GET /api/classes + GET /api/levels conform to; 002 owns the `classes` and `levels` schema and migrations)
+- `specs/003-backend-api-db/spec.md` (this feature — cross-cutting contract owner: error envelope, status-code table, **API version prefix FR-022 (`/api/v1.0/*`)**, **ULID row-handle column FR-021**, and **no-migrations FR-016 — user-prepared MySQL**)
+- `specs/001-teachers/spec.md` (dependency: 003 owns the cross-cutting contract that 001's POST/GET `/api/v1.0/teachers` + GET `/api/v1.0/subjects` conform to; 001 owns the `teachers` and `subjects` schema (user-prepared per FR-016); both tables carry `ulid CHAR(26) UNIQUE` per FR-021)
+- `specs/002-classes/spec.md` (dependency: 003 owns the cross-cutting contract that 002's POST/GET `/api/v1.0/classes` + GET `/api/v1.0/levels` conform to; 002 owns the `classes` and `levels` schema (user-prepared per FR-016); both tables carry `ulid CHAR(26) UNIQUE` per FR-021)
+
+# Cross-cutting project rules
+
+These rules apply to **every** active feature (003, 001, 002):
+
+- **ULID column (FR-021)**: every persisted table (`subjects`, `teachers`,
+  `levels`, `classes`) carries `ulid CHAR(26) UNIQUE NOT NULL`. Generated
+  server-side by the `ulid` npm package via `lib/ulid.ts` in a typeORM
+  `@BeforeInsert()` hook. Exposed as the first property in every Stage 1
+  POST 201 body and every entry in the GET 200 list. NOT a FK target.
+  Indexed as `uq_<table>_ulid`. Clients never set `ulid`; it is
+  server-generated. See `003-backend-api-db/research.md` §3.11 and
+  each feature's `data-model.md` for the entity sketch.
+- **Audit columns (FR-018)**: every persisted table carries
+  `created_at`, `created_by`, `modified_at`, `modified_by`, `version`.
+  Audit columns are hidden from the Stage 1 API response (FR-020).
+- **Surrogate id (FR-019)**: every persisted table has a surrogate
+  `id BIGINT UNSIGNED AUTO_INCREMENT` PK; FKs reference `id`. The
+  Stage 1 API response does NOT expose `id` for `classes` /
+  `teachers` (hidden to keep the wire shape stable).
+- **API version prefix (FR-022)**: all Stage 1 endpoints are exposed
+  under the literal prefix `/api/v1.0/`:
+  - `POST /api/v1.0/teachers` and `GET /api/v1.0/teachers` (001).
+  - `GET /api/v1.0/subjects` (001).
+  - `POST /api/v1.0/classes` and `GET /api/v1.0/classes` (002).
+  - `GET /api/v1.0/levels` (002).
+  Unversioned paths (`/api/teachers`, etc.) are out of Stage 1 scope;
+  the route handlers MUST NOT be reachable at the unversioned path.
+- **Migrations out of Stage 1 (FR-016, Session 2026-06-21)**: the
+  MySQL schema, audit columns, ULID column, FK constraints, UNIQUE
+  indexes, and the `subjects` / `levels` reference-list seed data are
+  all created by the user against the user-prepared MySQL container.
+  The application is read/write at runtime only — `docker compose up`
+  MUST NOT run a typeORM migration or any equivalent schema-creation
+  step. The `lib/db/migrations/` directory and the
+  `typeorm-ts-node-commonjs migration:run` command are out of Stage 1
+  scope. The four migration files
+  (`1700000000000-InitSchema.ts`, `…-SeedSubjects.ts`,
+  `…-InitClasses.ts`, `…-SeedLevels.ts`) are removed.
+- **Contact number rule (FR-004 in 001/003, Session 2026-06-21)**:
+  teacher `contactNumber` MUST be exactly 8 digits, digits-only
+  (`^\d{8}$`); no leading-digit restriction. The previous
+  `^[89]\d{7}$` Singapore-mobile assumption is removed.
 <!-- SPECKIT END -->

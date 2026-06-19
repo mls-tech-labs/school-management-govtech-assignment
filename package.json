@@ -1,0 +1,47 @@
+{
+  "name": "pvt-edu-admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private-education administration portal (Teachers + Classes) — Stage 1.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:contract": "vitest run tests/contract",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "antd": "^5.21.0",
+    "dotenv": "^16.4.5",
+    "joi": "^17.13.3",
+    "mysql2": "^3.11.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^25.0.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

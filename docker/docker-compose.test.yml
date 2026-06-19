@@ -1,0 +1,30 @@
+name: pvt-edu-admin-test
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pvt-edu-mysql-test
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=caching_sha2_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: edu_inst_test
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_test_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  mysql_test_data:
+    name: pvt-edu-mysql-data-test
