@@ -17,7 +17,7 @@ tags:
     description: Teacher registration and lookup
 
 paths:
-  /api/teachers:
+  /api/v1.0/teachers:
     get:
       tags: [teachers]
       summary: List all teachers
@@ -41,8 +41,8 @@ paths:
                   summary: Two teachers
                   value:
                     data:
-                      - { name: "Alice Tan",   subject: "Mathematics", email: "alice@example.com",   contactNumber: "91234567" }
-                      - { name: "Bobby Lim",   subject: "Science",     email: "bobby@example.com",   contactNumber: "98765432" }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T", name: "Alice Tan",   subject: "Mathematics", email: "alice@example.com",   contactNumber: "91234567" }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7U", name: "Bobby Lim",   subject: "Science",     email: "bobby@example.com",   contactNumber: "98765432" }
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "500":
@@ -89,7 +89,7 @@ paths:
                 invalidEmail:
                   value: { "error": "email must be a valid email" }
                 invalidContact:
-                  value: { "error": "contactNumber must match pattern \"^[89]\\d{7}$\"" }
+                  value: { "error": "contactNumber must match pattern \"^\\d{8}$\"" }
                 unknownSubject:
                   value: { "error": "subject must be one of [English, Mathematics, Science, ...]" }
         "409":
@@ -112,8 +112,21 @@ components:
   schemas:
     Teacher:
       type: object
-      required: [name, subject, email, contactNumber]
+      description: |
+        Stage 1 wire shape of a teacher. `ulid` is the
+        frontend-stable row handle (per FR-021, owned by
+        `003-backend-api-db`); `email` is the natural identifier.
+      required: [ulid, name, subject, email, contactNumber]
       properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Generated server-side
+            on insert by the `ulid` npm package. The frontend-stable
+            row handle (per FR-021).
         name:
           type: string
           minLength: 1
@@ -129,9 +142,9 @@ components:
           maxLength: 254
         contactNumber:
           type: string
-          pattern: "^[89]\\d{7}$"
+          pattern: "^\\d{8}$"
           example: "91234567"
-          description: 8 digits, starts with 8 or 9 (Singapore mobile).
+          description: Exactly 8 digits, no leading-digit restriction (per FR-004, Session 2026-06-21).
 
     CreateTeacherRequest:
       type: object
@@ -152,7 +165,7 @@ components:
           maxLength: 254
         contactNumber:
           type: string
-          pattern: "^[89]\\d{7}$"
+          pattern: "^\\d{8}$"
 
     TeacherListResponse:
       type: object

@@ -143,21 +143,45 @@ Impact Report.
 
 **Rationale**:
 - typeORM 0.3 is the current stable line; 0.3 has the new `DataSource` API
-  (replacing the legacy `createConnection`), the `EntityManager` and
-  `Repository` APIs that the plan uses, and the migration CLI (`typeorm-ts-node-commonjs migration:run`).
-- The Constitution's Technical Stack Constraints require typeORM entities,
-  repositories, and migrations — all of these are first-class in 0.3.
+  (replacing the legacy `createConnection`) and the `EntityManager` and
+  `Repository` APIs that the plan uses. (Stage 1 does NOT use the
+  migration CLI — `lib/db/migrations/` is out of scope per FR-016,
+  Session 2026-06-21; the MySQL schema is user-prepared.)
+- The Constitution's Technical Stack Constraints require typeORM
+  entities and repositories — both are first-class in 0.3.
 - `mysql2` is the official typeORM-recommended driver for MySQL; it supports
   prepared statements, connection pooling, and the auth plugin flow.
 - The plan uses `find()`, `findOne()`, and `save()` only — no QueryBuilder — so
   the driver doesn't matter beyond the connection string.
+
+**ULID column (per FR-021, owned by `003-backend-api-db`)**:
+- The 2026-06-20 ULID clarification added a
+  `ulid CHAR(26) NOT NULL UNIQUE` column to every table. The
+  `ulid` is generated server-side by the
+  [`ulid`](https://www.npmjs.com/package/ulid) npm package
+  (`generateUlid()` from `lib/ulid.ts`, owned by `003-backend-api-db`).
+- The `Teacher` and `Subject` entities declare
+  `@Column({ type: "char", length: 26, unique: true }) ulid!: string`
+  and the entity `@BeforeInsert()` hook calls `generateUlid()` to
+  populate the column.
+- `ulid` is the **frontend-stable row handle** (per FR-021). The
+  Stage 1 POST 201 body and every entry in the GET 200 list carry
+  `ulid`. The surrogate `id` continues to be hidden from the API
+  response (per `002-classes/spec.md` Clarifications, Session
+  2026-06-18, Q5 — and the matching rule inherited by 001).
+- `ulid` is NOT a foreign-key target. FKs continue to reference the
+  surrogate `id` (per FR-019). The `UNIQUE(teachers.ulid)` and
+  `UNIQUE(subjects.ulid)` indexes are the cross-cutting row-handle
+  constraint.
 
 **Alternatives considered**:
 - **`mysql` driver** (the older one) — still supported but not recommended; slower
   and lacks prepared-statement parameter binding fixes. Rejected.
 - **Prisma** — modern, schema-first, with great types. Rejected because the
   Constitution specifies typeORM, and the per-feature specs are written against
-  typeORM-style entities (decorators, repository methods, migration files).
+  typeORM-style entities (decorators, repository methods). (Stage 1
+  does not include migration files — `lib/db/migrations/` is out
+  of scope per FR-016, Session 2026-06-21.)
 
 ---
 
@@ -173,7 +197,9 @@ Impact Report.
   recommended for production. Pin to `^17`.
 - Joi's `.pattern()`, `.valid(... list)`, `.email({ tlds: false })` and
   `.required()` cover the spec's validation rules cleanly: email format,
-  8-digit `/^[89]\d{7}$/` contact number, subject in the seeded list.
+  8-digit `/^\d{8}$/` contact number (digits-only, no
+  leading-digit restriction — per FR-004, Session 2026-06-21),
+  subject in the seeded list.
 - Joi schemas live as plain `.ts` modules (per Principle VII), imported by the
   route handler, and unit-tested directly (no live HTTP).
 
@@ -264,13 +290,16 @@ CJS; the default for new Next 15 apps is the Next-native build pipeline, with
 - Next 15's default `tsconfig.json` is CommonJS-style on the build side but the
   authored source is ESM-style (import/export). This is the path of least
   resistance.
-- typeORM 0.3 ships both CJS and ESM builds; the migration CLI works with the
-  Next 15 build setup out of the box.
+- typeORM 0.3 ships both CJS and ESM builds; the library works with the
+  Next 15 build setup out of the box. (Stage 1 does not run the
+  typeORM migration CLI — `lib/db/migrations/` is out of scope per
+  FR-016, Session 2026-06-21.)
 
 **Alternatives considered**:
 - **Full strict ESM** (`"type": "module"` everywhere, no `require`). Rejected
-  because it makes the typeORM migration CLI's `ts-node` runner harder to
-  configure; not worth the friction.
+  because it makes any future re-introduction of the typeORM migration CLI
+  harder to configure; not worth the friction in Stage 1 where the
+  CLI is not used.
 - **Full CJS** (the legacy pattern). Rejected because Next 15 has moved on.
 
 ---

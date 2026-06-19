@@ -5,10 +5,11 @@ info:
   description: |
     Public HTTP contract for the `levels` reference list. The list
     is read-only in Stage 1 (no POST / PUT / DELETE); the data is
-    seeded by the fourth migration
-    `1700000000003-SeedLevels.ts` (per
-    `003-backend-api-db/spec.md` FR-017) and surfaced as a dropdown
+    seeded by the user against the user-prepared MySQL container (per
+    `003-backend-api-db/spec.md` FR-016) and surfaced as a dropdown
     on the Add Class form. See `003-backend-api-db/spec.md` FR-009c.
+    The version prefix `/api/v1.0/` is literal (per
+    `003-backend-api-db/spec.md` FR-022).
 servers:
   - url: http://localhost:3000
     description: Local dev (docker compose up)
@@ -18,7 +19,7 @@ tags:
     description: Levels reference list (read-only)
 
 paths:
-  /api/levels:
+  /api/v1.0/levels:
     get:
       tags: [levels]
       summary: List active levels
@@ -27,6 +28,10 @@ paths:
         `active = true`. The Stage 1 seed list is the only data
         source; admin authoring is out of scope (see
         `003-backend-api-db/spec.md` Assumptions).
+
+        Response shape per entry:
+        `{ ulid, name, active }`. The `ulid` is the 26-character
+        Crockford Base32 frontend-stable row handle (per FR-021).
       operationId: listActiveLevels
       responses:
         "200":
@@ -39,16 +44,16 @@ paths:
                 seeded:
                   value:
                     data:
-                      - { name: "Primary 1",   active: true }
-                      - { name: "Primary 2",   active: true }
-                      - { name: "Primary 3",   active: true }
-                      - { name: "Primary 4",   active: true }
-                      - { name: "Primary 5",   active: true }
-                      - { name: "Primary 6",   active: true }
-                      - { name: "Secondary 1", active: true }
-                      - { name: "Secondary 2", active: true }
-                      - { name: "Secondary 3", active: true }
-                      - { name: "Secondary 4", active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P80", name: "Primary 1",   active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P81", name: "Primary 2",   active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P82", name: "Primary 3",   active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P83", name: "Primary 4",   active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P84", name: "Primary 5",   active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P85", name: "Primary 6",   active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P86", name: "Secondary 1", active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P87", name: "Secondary 2", active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P88", name: "Secondary 3", active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P89", name: "Secondary 4", active: true }
                 empty:
                   summary: Seed not yet applied
                   value: { data: [] }
@@ -63,8 +68,17 @@ components:
   schemas:
     Level:
       type: object
-      required: [name, active]
+      required: [ulid, name, active]
       properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Generated server-side
+            by the `ulid` npm package on insert (per FR-021). The
+            frontend-stable row handle.
         name:
           type: string
           minLength: 1

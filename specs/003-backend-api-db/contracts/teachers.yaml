@@ -11,7 +11,9 @@ info:
 
     Stage 1 is Create + Read only. There is no `PUT`, `PATCH`, or
     `DELETE` endpoint for teachers in scope. Per the requirements
-    file: "POST /api/teachers" + "GET /api/teachers".
+    file: "POST /api/v1.0/teachers" + "GET /api/v1.0/teachers". The
+    version prefix `/api/v1.0/` is literal (per
+    `003-backend-api-db/spec.md` FR-022).
 
     Cross-references:
       - 003 cross-cutting contract: [./common.yaml](./common.yaml)
@@ -27,7 +29,7 @@ tags:
     description: Teacher registration and lookup (Create + Read)
 
 paths:
-  /api/teachers:
+  /api/v1.0/teachers:
     get:
       tags: [teachers]
       summary: List all teachers
@@ -37,7 +39,10 @@ paths:
         `001-teachers/spec.md` Clarifications, Session 2026-06-18).
 
         Response shape per entry:
-        `{ name, subject, email, contactNumber }`.
+        `{ ulid, name, subject, email, contactNumber }`. The `ulid`
+        is the 26-character Crockford Base32 frontend-stable row
+        handle (per `003-backend-api-db/spec.md` FR-021). The
+        surrogate `id` is deliberately omitted.
       operationId: listTeachers
       responses:
         "200":
@@ -54,8 +59,8 @@ paths:
                   summary: Two teachers
                   value:
                     data:
-                      - { name: "Mary", subject: "Mathematics", email: "teachermary@gmail.com", contactNumber: "68129414" }
-                      - { name: "Ken",  subject: "Mother Tongue Language", email: "teacherken@gmail.com", contactNumber: "61824191" }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T", name: "Mary", subject: "Mathematics", email: "teachermary@gmail.com", contactNumber: "68129414" }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7U", name: "Ken",  subject: "Mother Tongue Language", email: "teacherken@gmail.com", contactNumber: "61824191" }
         "415":
           $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
         "500":
@@ -71,10 +76,19 @@ paths:
         `subjects` list (see `lib/validation/teacher.ts`) and inserts
         the row. Race-safe via `UNIQUE(teachers.email)`.
 
+        A `ulid` is generated server-side (per FR-021) on insert
+        and returned in the 201 body so the frontend can cache the
+        row handle.
+
         The `subject` field must match an active entry in the
         `subjects` reference list; unknown / inactive values are
         rejected with `400 Bad Request` + `{ "error": "Invalid
         subject" }` per `003-backend-api-db/spec.md` FR-013.
+
+        The `contactNumber` MUST be exactly 8 digits, digits-only;
+        no leading-digit restriction (per
+        `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-21).
       operationId: createTeacher
       requestBody:
         required: true
@@ -97,6 +111,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Teacher"
               example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
                 name: "Mary"
                 subject: "Mathematics"
                 email: "teachermary@gmail.com"
@@ -106,7 +121,9 @@ paths:
         "409":
           description: |
             Duplicate teacher email (`UNIQUE(teachers.email)`
-            violation). Per `003-backend-api-db/spec.md` FR-013.
+            violation) or duplicate `ulid` (`UNIQUE(teachers.ulid)`
+            violation — astronomically rare). Per
+            `003-backend-api-db/spec.md` FR-013 and FR-021.
           content:
             application/json:
               schema:
@@ -125,9 +142,20 @@ components:
       type: object
       description: |
         Stage 1 wire shape of a teacher. There is no `id` column on
-        the `teachers` table — `email` is the natural identifier.
-      required: [name, subject, email, contactNumber]
+        the `teachers` table — `email` is the natural identifier and
+        `ulid` is the frontend-stable row handle (per FR-021).
+      required: [ulid, name, subject, email, contactNumber]
       properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Generated server-side
+            on insert by the `ulid` npm package (per
+            `003-backend-api-db/spec.md` FR-021). The frontend-stable
+            row handle.
         name:
           type: string
           minLength: 1
@@ -147,11 +175,12 @@ components:
             The teacher's email; unique across all teachers.
         contactNumber:
           type: string
-          pattern: "^[89]\\d{7}$"
+          pattern: "^\\d{8}$"
           description: |
-            8 digits, must start with `8` or `9` (Singapore mobile).
-            The regex is the single source of truth (matches
-            `001-teachers/spec.md` Clarifications, Session 2026-06-18).
+            Exactly 8 digits; no leading-digit restriction. The regex
+            is the single source of truth (matches
+            `001-teachers/spec.md` Clarifications, Session 2026-06-21
+            and `003-backend-api-db/spec.md` FR-004).
 
     CreateTeacherRequest:
       type: object
@@ -176,7 +205,7 @@ components:
           maxLength: 254
         contactNumber:
           type: string
-          pattern: "^[89]\\d{7}$"
+          pattern: "^\\d{8}$"
 
     TeacherListResponse:
       type: object

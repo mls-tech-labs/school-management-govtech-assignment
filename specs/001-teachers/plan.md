@@ -8,14 +8,19 @@
 
 Build the Teachers feature (Create + Read) end-to-end: a Next.js 15 application with
 two client-rendered pages (Add Teacher form, Teachers list) and three API endpoints
-(`POST /api/teachers`, `GET /api/teachers`, `GET /api/subjects`), backed by a MySQL 8
-database managed through typeORM entities, repositories, and a versioned migration
-set. All request bodies and query parameters are validated by Joi schemas that
-mirror the typeORM columns field-for-field (Principle VII). The teachers reference
-the `subjects` reference list via a foreign key, and the `subjects` table is seeded
-by a second migration (per `003-backend-api-db` Clarifications, Session 2026-06-18).
-The whole stack (app + MySQL) runs in Docker via `docker compose up`, with the
-schema rebuilt from a single repeatable command.
+(`POST /api/v1.0/teachers`, `GET /api/v1.0/teachers`, `GET /api/v1.0/subjects`),
+backed by a MySQL 8 database managed through typeORM entities and repositories.
+All request bodies and query parameters are validated by Joi schemas that mirror
+the typeORM columns field-for-field (Principle VII). The teachers reference the
+`subjects` reference list via a foreign key. The `subjects` and `levels` reference
+lists are populated by the user against the user-prepared MySQL container (per
+`003-backend-api-db` Clarifications, Session 2026-06-21, FR-016); there is no
+typeORM migration set, no `npm run seed` step, and no boot-time seeder in
+Stage 1 — the application is read/write at runtime only. The whole stack (app +
+MySQL) runs in Docker via `docker compose up`, with the schema prepared by the
+user separately. All Stage 1 endpoints are exposed under the version prefix
+`/api/v1.0/` (per `003-backend-api-db` Clarifications, Session 2026-06-21,
+FR-022).
 
 ## Technical Context
 
@@ -29,15 +34,19 @@ see `.specify/memory/constitution.md` v2.3.0 Sync Impact Report and the
 `### Session 2026-06-19` clarification in [`spec.md`](./spec.md)):
 - `next@^15` — framework (App Router, client components default)
 - `react@^19` and `react-dom@^19` — UI runtime (paired with Next 15)
-- `typeorm@^0.3` — data access (entities, repositories, migrations)
+- `typeorm@^0.3` — data access (entities, repositories)
 - `mysql2@^3` — MySQL driver for typeORM
 - `joi@^17` — request validation (mirrors typeORM columns per Principle VII)
 - `antd@<pinned>` — UI component library (per Constitution v2.3.0 Technical Stack Constraints; satisfies Stage 1 requirement)
 - `tailwindcss@<pinned>` — utility-first CSS framework (per Constitution v2.3.0)
 - `postcss@<pinned>` and `autoprefixer@<pinned>` — Tailwind CSS build pipeline
 - `dotenv@^16` — runtime configuration loader
+- `ulid@<pinned>` — generator for the cross-cutting `ulid` row-handle
+  column on every table (per `003-backend-api-db/spec.md` FR-021 — see
+  the `### Session 2026-06-20 (ULID column)` clarification in
+  [`spec.md`](./spec.md) and [`../003-backend-api-db/research.md` §3.11](../003-backend-api-db/research.md#311-ulid-column-fr-021--cross-cutting-row-handle))
 
-**Storage**: MySQL 8.x running in a Docker container (per Constitution + Sync Impact Report). All persistence goes through typeORM entities, repositories, and migrations. Raw SQL is permitted only inside typeORM migrations, not in business code. Two tables are in scope for this feature: `teachers` and `subjects` (the latter shared with the Classes feature; see `003-backend-api-db`).
+**Storage**: MySQL 8.x running in a Docker container (per Constitution + Sync Impact Report). All persistence goes through typeORM entities and repositories. **There are no typeORM migrations in Stage 1** (per FR-016, Session 2026-06-21 — the MySQL schema is user-prepared). Two tables are in scope for this feature: `teachers` and `subjects` (the latter shared with the Classes feature; see `003-backend-api-db`).
 
 **Testing**: Vitest (latest) — see [research.md §1.1](./research.md#11-unit-test-runner-vitest-vs-jest) for the Vitest-vs-Jest decision. Unit tests cover every Joi schema (happy path + each rejection constraint) and the route-handler happy / error paths. Integration tests run against a typeORM test DataSource against the real MySQL container (no in-memory mock; tests use a freshly-initialised schema and tear it down on completion). Tests are runnable without a separate MySQL process in production but the integration tier requires the MySQL container to be up.
 
@@ -56,8 +65,9 @@ see `.specify/memory/constitution.md` v2.3.0 Sync Impact Report and the
 
 **Scale/Scope**:
 - 1 application process (Next.js) + 1 database process (MySQL), both in Docker.
-- 2 database tables (`teachers`, `subjects`).
-- 3 API endpoints (`POST /api/teachers`, `GET /api/teachers`, `GET /api/subjects`).
+- 2 database tables (`teachers`, `subjects`); both carry the cross-cutting
+  `ulid CHAR(26) UNIQUE` column (per FR-021, owned by `003-backend-api-db`).
+- 3 API endpoints (`POST /api/v1.0/teachers`, `GET /api/v1.0/teachers`, `GET /api/v1.0/subjects`) — all under the `/api/v1.0/` version prefix (per FR-022).
 - 2 client-rendered pages (`/teachers/add`, `/teachers`).
 - 0 background jobs, 0 cron tasks, 0 worker processes.
 
@@ -73,8 +83,8 @@ see `.specify/memory/constitution.md` v2.3.0 Sync Impact Report and the
 | IV. Single Role: Administrator | ✅ Pass | No auth, no roles, no session; the only user is the Administrator, matching the spec. |
 | V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. No DTOs, no repositories class wrappers, no service layer, no DI container. The smallest Next.js + typeORM + Joi + Ant Design + Tailwind setup that satisfies the spec. The "extra unknown fields" policy and any other low-impact decisions are deferred to the `simplify` skill if they come up at implementation time. |
 | VI. Functional-First (Classes Only When Necessary) | ✅ Pass | Server code is small modules of pure functions (`lib/validation/*.ts`, `lib/api/response.ts`, `app/api/*/route.ts`). React code uses function components and hooks. The only classes are typeORM entity classes (framework-mandated). |
-| VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Teacher` mirrors the typeORM entity column-for-column (same required-ness, same length bounds, same regex). `Joi.string().email().required()`, `Joi.string().pattern(/^[89]\d{7}$/).required()` for contact, `Joi.string().valid(...).required()` for subject. |
-| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | UI components are function components, named after their role (`TeacherForm`, `TeacherTable`, `FormField`, `EmptyState`, `ErrorState`, `LoadingState`), with explicit typed props. Composed from **Ant Design (`antd`)** primitives and styled with **Tailwind CSS** utility classes (per Constitution v2.3.0) — no feature-specific hard-coding. No three-layer indirection to render one button. |
+| VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Teacher` mirrors the typeORM entity column-for-column (same required-ness, same length bounds, same regex). `Joi.string().email().required()`, `Joi.string().pattern(/^\d{8}$/).required()` for contact (exactly 8 digits, no leading-digit restriction — per FR-004, Session 2026-06-21), `Joi.string().valid(...).required()` for subject. The `ulid` column is server-generated (per FR-021) and is NOT part of any request body schema — it is never accepted from the client. |
+| VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | UI components are function components, named after their role (`TeacherForm`, `TeacherTable`, `FormField`, `EmptyState`, `ErrorState`, `LoadingState`), with explicit typed props. Composed from **Ant Design (`antd`)** primitives and styled with **Tailwind CSS** utility classes (per Constitution v2.3.0) — no feature-specific hard-coding. No three-layer indirection to render one button. The `ulid` field (per FR-021) is displayed as a monospace string in any UI surface that needs the row handle (e.g., the row key for the Ant Design `Table`). |
 
 **Stage Scope compliance** (per Constitution → Stage Scope):
 - ✅ In scope: Teachers UI Create + Read; backend `POST` + `GET` for Teachers; data model for `teachers` and `subjects`.
@@ -124,27 +134,28 @@ app/
 │       ├── ErrorState.tsx           # "Could not load" + retry
 │       └── LoadingState.tsx         # Skeleton / spinner
 ├── api/
-│   ├── teachers/
-│   │   └── route.ts                 # GET (list) + POST (create)
-│   └── subjects/
-│       └── route.ts                 # GET (list of active subjects)
+│   └── v1.0/
+│       ├── teachers/
+│       │   └── route.ts             # GET (list) + POST (create) — under the /api/v1.0/ prefix (per FR-022)
+│       └── subjects/
+│           └── route.ts             # GET (list of active subjects) — under the /api/v1.0/ prefix (per FR-022)
 └── globals.css
 
 lib/
 ├── db/
-│   ├── data-source.ts               # typeORM DataSource (singleton)
-│   ├── entities/
-│   │   ├── Teacher.ts               # @Entity() Teacher class
-│   │   └── Subject.ts               # @Entity() Subject class
-│   └── migrations/
-│       ├── 1700000000000-InitSchema.ts       # creates teachers, subjects tables
-│       └── 1700000000001-SeedSubjects.ts     # INSERT IGNORE the seed list
+│   ├── data-source.ts               # typeORM DataSource (singleton; no `migrations` runner — the schema is user-prepared per FR-016)
+│   └── entities/
+│       ├── Teacher.ts               # @Entity() Teacher class (+ ulid CHAR(26) UNIQUE column per FR-021; @BeforeInsert hook calls generateUlid())
+│       └── Subject.ts               # @Entity() Subject class (+ ulid CHAR(26) UNIQUE column per FR-021; @BeforeInsert hook calls generateUlid())
 ├── validation/
-│   ├── teacher.ts                   # Joi schema for POST /api/teachers body
-│   └── subject.ts                   # Joi schema for GET /api/subjects query (none required)
+│   ├── teacher.ts                   # Joi schema for POST /api/v1.0/teachers body
+│   └── subject.ts                   # Joi schema for GET /api/v1.0/subjects query (none required)
 ├── api/
 │   ├── response.ts                  # errorEnvelope(), jsonError(), jsonOk() pure functions
-│   └── content-type.ts              # requireJson(req) → throws 415 if not application/json
+│   ├── content-type.ts              # requireJson(req) → throws 415 if not application/json
+│   ├── route.ts                     # withApiContract(handler) — cross-cutting wrapper (per FR-022, owned by 003-backend-api-db)
+│   └── db-error.ts                  # typeORM QueryFailedError → status + message mapping
+├── ulid.ts                          # generateUlid() — thin wrapper over the `ulid` npm package (per FR-021, owned by 003-backend-api-db)
 └── config.ts                        # reads process.env, validates with Joi at boot
 
 components/                          # Shared, feature-agnostic UI primitives
@@ -154,21 +165,21 @@ components/                          # Shared, feature-agnostic UI primitives
 
 tests/
 ├── unit/
-│   ├── teacher.validation.spec.ts   # POST /api/teachers Joi schema — happy + each rejection
+│   ├── teacher.validation.spec.ts   # POST /api/v1.0/teachers Joi schema — happy + each rejection
 │   ├── teacher.repository.spec.ts   # Teacher entity + repository (against test DataSource)
 │   └── subject.repository.spec.ts   # Subject entity + repository
 ├── contract/
-│   ├── teachers.api.spec.ts         # POST + GET /api/teachers (against test app instance)
-│   └── subjects.api.spec.ts         # GET /api/subjects
+│   ├── teachers.api.spec.ts         # POST + GET /api/v1.0/teachers (against test app instance)
+│   └── subjects.api.spec.ts         # GET /api/v1.0/subjects
 └── integration/
-    └── teachers.api.spec.ts         # POST + GET /api/teachers end-to-end (full DB)
+    └── teachers.api.spec.ts         # POST + GET /api/v1.0/teachers end-to-end (full DB)
 
 docker/
 ├── Dockerfile                       # multi-stage build of the Next.js app
-├── docker-compose.yml               # 2 services: app, mysql
+├── docker-compose.yml               # 2 services: app, mysql (no migration step on boot — per FR-016)
 ├── docker-compose.test.yml          # 1 service: mysql (for integration tests)
 └── mysql/
-    └── init/                        # optional bootstrap SQL (empty in Stage 1)
+    └── init/                        # optional bootstrap SQL (empty in Stage 1 — schema is user-prepared)
 
 .env.example                         # documents every env var (no secrets)
 .env.local                           # gitignored; DB URL, server port (per Constitution)
@@ -181,7 +192,7 @@ vitest.config.ts                     # unit + contract + integration
 README.md                            # contract: how to run, assumptions, links
 ```
 
-**Structure Decision**: Single Next.js application (per Constitution: "The application is one process"). The structure follows the Constitution's "UI under `app/`, API under `app/api/`" rule. `lib/` holds the cross-cutting pure-function modules (validation, API helpers, DB entities, migrations). `components/` holds feature-agnostic UI primitives that wrap **Ant Design (`antd`)** and are styled with **Tailwind CSS** utility classes. `tests/` mirrors the layered test strategy (unit, contract, integration). Docker files live in `docker/` and are referenced by the root `docker compose` invocation. The plan is silent on the placement of `.requirements/Full Stack Assignment.md` because the file is not present in the repo (a missing-asset notice is in [research.md §1.6](./research.md#16-missing-requirements-asset)).
+**Structure Decision**: Single Next.js application (per Constitution: "The application is one process"). The structure follows the Constitution's "UI under `app/`, API under `app/api/`" rule. `lib/` holds the cross-cutting pure-function modules (validation, API helpers, DB entities). `components/` holds feature-agnostic UI primitives that wrap **Ant Design (`antd`)** and are styled with **Tailwind CSS** utility classes. `tests/` mirrors the layered test strategy (unit, contract, integration). Docker files live in `docker/` and are referenced by the root `docker compose` invocation. The plan is silent on the placement of `.requirements/Full Stack Assignment.md` because the file is not present in the repo (a missing-asset notice is in [research.md §1.6](./research.md#16-missing-requirements-asset)).
 
 ## Complexity Tracking
 

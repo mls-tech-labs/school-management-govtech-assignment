@@ -5,9 +5,11 @@ info:
   description: |
     Public HTTP contract for the `subjects` reference list. The list is
     read-only in Stage 1 (no POST / PUT / DELETE); the data is seeded by
-    a typeORM migration and surfaced as a dropdown on the Add Teacher
-    form. See `001-teachers/spec.md` FR-005a and `003-backend-api-db`
-    FR-009c.
+    the user against the user-prepared MySQL container (per
+    `003-backend-api-db/spec.md` FR-016) and surfaced as a dropdown on
+    the Add Teacher form. See `001-teachers/spec.md` FR-005a and
+    `003-backend-api-db` FR-009c. The version prefix `/api/v1.0/` is
+    literal (per `003-backend-api-db/spec.md` FR-022).
 servers:
   - url: http://localhost:3000
     description: Local dev (docker compose up)
@@ -17,7 +19,7 @@ tags:
     description: Subjects reference list (read-only)
 
 paths:
-  /api/subjects:
+  /api/v1.0/subjects:
     get:
       tags: [subjects]
       summary: List active subjects
@@ -37,15 +39,15 @@ paths:
                 seeded:
                   value:
                     data:
-                      - { name: "English",          active: true }
-                      - { name: "Mathematics",      active: true }
-                      - { name: "Science",          active: true }
-                      - { name: "Chinese",          active: true }
-                      - { name: "Malay",            active: true }
-                      - { name: "Tamil",            active: true }
-                      - { name: "Art",              active: true }
-                      - { name: "Music",            active: true }
-                      - { name: "Physical Education", active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P70", name: "English",          active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P71", name: "Mathematics",      active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P72", name: "Science",          active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P73", name: "Chinese",          active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P74", name: "Malay",            active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P75", name: "Tamil",            active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P76", name: "Art",              active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P77", name: "Music",            active: true }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P78", name: "Physical Education", active: true }
                 empty:
                   summary: Seed not yet applied
                   value: { "data": [] }
@@ -58,8 +60,17 @@ components:
   schemas:
     Subject:
       type: object
-      required: [name, active]
+      required: [ulid, name, active]
       properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Generated server-side
+            by the `ulid` npm package (per FR-021, owned by
+            `003-backend-api-db`).
         name:
           type: string
           minLength: 1

@@ -11,12 +11,17 @@ info:
 
     Stage 1 is Create + Read only. There is no `PUT`, `PATCH`, or
     `DELETE` endpoint for classes in scope. Per the requirements
-    file: "POST /api/classes" + "GET /api/classes".
+    file: "POST /api/v1.0/classes" + "GET /api/v1.0/classes". The
+    version prefix `/api/v1.0/` is literal (per
+    `003-backend-api-db/spec.md` FR-022).
 
     The form-teacher relationship is enforced at the data layer by
-    `UNIQUE(classes.form_teacher_email)` and
-    `FK(classes.form_teacher_email → teachers.email)`. See
-    [`./data-model.md`](../data-model.md) §2.
+    `UNIQUE(classes.form_teacher_id)` and
+    `FK(classes.form_teacher_id → teachers.id)`. The route handler
+    resolves the wire-format `teacherEmail` to `form_teacher_id` via
+    `findTeacherByEmail` before insert (per
+    `003-backend-api-db/spec.md` FR-019). See
+    [`../002-classes/data-model.md`](../002-classes/data-model.md) §2.
 
     Cross-references:
       - 003 cross-cutting contract: [./common.yaml](./common.yaml)
@@ -32,7 +37,7 @@ tags:
     description: Class registration and lookup (Create + Read)
 
 paths:
-  /api/classes:
+  /api/v1.0/classes:
     get:
       tags: [classes]
       summary: List all classes
@@ -43,8 +48,10 @@ paths:
         Clarifications, Session 2026-06-18).
 
         Response shape per entry:
-        `{ level, name, formTeacher: { name } }`. The surrogate
-        `id` column is **not** in the response.
+        `{ ulid, level, name, formTeacher: { name } }`. The `ulid`
+        is the 26-character Crockford Base32 frontend-stable row
+        handle (per `003-backend-api-db/spec.md` FR-021). The
+        surrogate `id` column is **not** in the response.
       operationId: listClasses
       responses:
         "200":
@@ -61,8 +68,8 @@ paths:
                   summary: Two classes
                   value:
                     data:
-                      - { level: "Primary 1", name: "Class 1A", formTeacher: { name: "Alice Tan" } }
-                      - { level: "Primary 2", name: "Class 2B", formTeacher: { name: "Bobby Lim" } }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T", level: "Primary 1", name: "Class 1A", formTeacher: { name: "Alice Tan" } }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7U", level: "Primary 2", name: "Class 2B", formTeacher: { name: "Bobby Lim" } }
         "415":
           $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
         "500":
@@ -79,7 +86,11 @@ paths:
         the `teachers` table to distinguish `404 "Teacher not found"`
         from `409 "Teacher already assigned"`, then inserts the row.
         Race-safe via the `UNIQUE` indexes on `classes.name` and
-        `classes.form_teacher_email`.
+        `classes.form_teacher_id`.
+
+        A `ulid` is generated server-side (per FR-021) on insert
+        and returned in the 201 body so the frontend can cache the
+        row handle.
 
         The `level` field must match an active entry in the `levels`
         reference list; unknown / inactive values are rejected with
@@ -106,6 +117,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Class"
               example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
                 level: "Primary 1"
                 name: "Class 1A"
                 formTeacher: { name: "Alice Tan" }
@@ -116,11 +128,13 @@ paths:
         "409":
           description: |
             Either the class `name` is already in use
-            (`UNIQUE(classes.name)`) or the teacher identified by
+            (`UNIQUE(classes.name)`), the teacher identified by
             `teacherEmail` is already the form teacher of another
-            class (`UNIQUE(classes.form_teacher_email)`). Per
-            `003-backend-api-db/spec.md` FR-013. Race-safe by
-            construction.
+            class (`UNIQUE(classes.form_teacher_id)`), or (extremely
+            rare) the generated `ulid` collides
+            (`UNIQUE(classes.ulid)`). Per
+            `003-backend-api-db/spec.md` FR-013 and FR-021.
+            Race-safe by construction.
           content:
             application/json:
               schema:
@@ -144,10 +158,20 @@ components:
       description: |
         Stage 1 wire shape of a class. The surrogate `id` column is
         deliberately omitted; it lives in the DB but is not returned
-        to the client. Per `002-classes/spec.md` Clarifications,
+        to the client. `ulid` is the frontend-stable row handle (per
+        FR-021). Per `002-classes/spec.md` Clarifications,
         Session 2026-06-18 (Q5).
-      required: [level, name, formTeacher]
+      required: [ulid, level, name, formTeacher]
       properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Generated server-side
+            on insert by the `ulid` npm package (per
+            `003-backend-api-db/spec.md` FR-021).
         level:
           type: string
           minLength: 1

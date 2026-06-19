@@ -18,8 +18,11 @@ scenarios here pin down the cross-cutting contract:
 - the `{ "error": "..." }` envelope on every error,
 - the `400 / 404 / 409 / 415 / 500 / 503` status-code table,
 - the `Content-Type: application/json` gate (`415`),
-- the migration-set order and idempotency (`FR-016`, `FR-017`,
-  `SC-006`),
+- the user-prepared MySQL contract (`FR-016`, Session 2026-06-21) —
+  the schema is created by the user; `docker compose up` does NOT
+  run migrations,
+- the version prefix `/api/v1.0/` on every endpoint (`FR-022`,
+  Session 2026-06-21),
 - the data-integrity rules at the DB layer (`FR-006..FR-009b`),
 - the race-safety of the unique indexes (`SC-007`),
 - and the persistence-across-restart property (`SC-001`).
@@ -56,18 +59,26 @@ cd pvt-edu-admin-project
 # 2. Install dependencies (uses package.json with caret ranges, locked via package-lock.json)
 npm install
 
-# 3. Bring up the app + MySQL in Docker (runs all 4 migrations on first boot)
-docker compose -f docker/docker-compose.yml up -d --build
+# 3. Bring up MySQL separately and prepare the schema (per FR-016, Session 2026-06-21)
+#    The user prepares the MySQL container with the full Stage 1 schema:
+#    subjects (9 rows), teachers, levels (10 rows), classes;
+#    audit columns, ulid CHAR(26) UNIQUE, FK constraints, UNIQUE indexes.
+#    The application does NOT run migrations on boot.
+docker compose -f docker/docker-compose.yml up -d mysql
+# (then run your prepared SQL against the MySQL container, e.g. via
+#  docker/mysql/init/01-schema-and-seed.sql or an equivalent manual script)
 
-# 4. Wait for the app container to finish running the migrations
+# 4. Bring up the app container (connects to the user-prepared MySQL; no migration step)
+docker compose -f docker/docker-compose.yml up -d --build app
 docker compose -f docker/docker-compose.yml logs -f app
-#   Look for: "Migrations run: 4" + "Listening on http://localhost:3000"
+#   Look for: "Listening on http://localhost:3000" (no migration log lines)
 ```
 
 After step 4, the app is on `http://localhost:3000`, MySQL is on
 `localhost:3306` (inside the docker network), and the schema has 4
 tables (`subjects`, `teachers` from `001`; `levels`, `classes` from
-`002`) — both reference lists are seeded. Verify with:
+`002`) — both reference lists are seeded by the user's SQL. Verify
+with:
 
 ```bash
 docker compose -f docker/docker-compose.yml exec mysql \
@@ -87,23 +98,23 @@ out as "your API may be subjected to automated test tools".
 ```bash
 # Trigger a 400 on each endpoint by sending a missing required field
 
-# 1.1 POST /api/teachers (missing name)
-curl -s -X POST http://localhost:3000/api/teachers \
+# 1.1 POST /api/v1.0/teachers (missing name)
+curl -s -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{"subject":"Mathematics","email":"x@x.com","contactNumber":"91234567"}' \
   | jq .
 
-# 1.2 POST /api/classes (missing teacherEmail)
-curl -s -X POST http://localhost:3000/api/classes \
+# 1.2 POST /api/v1.0/classes (missing teacherEmail)
+curl -s -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{"level":"Primary 1","name":"Class Z"}' \
   | jq .
 
-# 1.3 GET /api/subjects (no body — should still 200; sanity check)
-curl -s http://localhost:3000/api/subjects | jq .
+# 1.3 GET /api/v1.0/subjects (no body — should still 200; sanity check)
+curl -s http://localhost:3000/api/v1.0/subjects | jq .
 
-# 1.4 GET /api/levels (no body — should still 200; sanity check)
-curl -s http://localhost:3000/api/levels | jq .
+# 1.4 GET /api/v1.0/levels (no body — should still 200; sanity check)
+curl -s http://localhost:3000/api/v1.0/levels | jq .
 ```
 
 **Acceptance check**: every error response has exactly one top-level
@@ -119,22 +130,22 @@ two `GET` calls return `{ "data": [...] }` (not the error envelope).
 content types with `415` and the agreed error envelope.
 
 ```bash
-# 2.1 POST /api/teachers with text/plain
-curl -s -i -X POST http://localhost:3000/api/teachers \
+# 2.1 POST /api/v1.0/teachers with text/plain
+curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: text/plain" \
   -d 'name=Mary&subject=Mathematics&email=teachermary@gmail.com&contactNumber=68129414'
 
-# 2.2 POST /api/classes with form-urlencoded
-curl -s -i -X POST http://localhost:3000/api/classes \
+# 2.2 POST /api/v1.0/classes with form-urlencoded
+curl -s -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d 'level=Primary+1&name=Class+1A&teacherEmail=alice@example.com'
 
-# 2.3 POST /api/teachers with no Content-Type header at all
-curl -s -i -X POST http://localhost:3000/api/teachers \
+# 2.3 POST /api/v1.0/teachers with no Content-Type header at all
+curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -d '{"name":"NoHeader","subject":"Mathematics","email":"noh@example.com","contactNumber":"91234567"}'
 
-# 2.4 POST /api/teachers with charset suffix "application/json; charset=utf-8"
-curl -s -i -X POST http://localhost:3000/api/teachers \
+# 2.4 POST /api/v1.0/teachers with charset suffix "application/json; charset=utf-8"
+curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json; charset=utf-8" \
   -d '{"name":"Mary","subject":"Mathematics","email":"mary@example.com","contactNumber":"91234567"}'
 ```
@@ -154,22 +165,22 @@ of `{ "error": "Content-Type must be application/json" }`. Request
 subject` / `400 Invalid level`, not at the FK level with `409`.
 
 ```bash
-# 3.1 POST /api/teachers with an unknown subject
-curl -s -i -X POST http://localhost:3000/api/teachers \
+# 3.1 POST /api/v1.0/teachers with an unknown subject
+curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{"name":"Bob","subject":"Underwater Basket Weaving","email":"bob@example.com","contactNumber":"91234567"}'
 
-# 3.2 POST /api/classes with an unknown level
-curl -s -i -X POST http://localhost:3000/api/classes \
+# 3.2 POST /api/v1.0/classes with an unknown level
+curl -s -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{"level":"Kindergarten 1","name":"Class K1","teacherEmail":"alice@example.com"}'
 
-# 3.3 POST /api/teachers with a subject that exists but is inactive (deactivate it first)
+# 3.3 POST /api/v1.0/teachers with a subject that exists but is inactive (deactivate it first)
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
   -e "UPDATE subjects SET active = false WHERE name = 'Music';"
 
-curl -s -i -X POST http://localhost:3000/api/teachers \
+curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{"name":"Carl","subject":"Music","email":"carl@example.com","contactNumber":"91234567"}'
 
@@ -195,26 +206,27 @@ direct writes that bypass the API.
 # 4.1 Duplicate teacher email (FR-006) — bypass the API, write directly
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "INSERT INTO teachers (name, subject, email, contact_number) VALUES ('Dup', 'Mathematics', 'mary@example.com', '91234567');"
+  -e "INSERT INTO teachers (name, subject_id, email, contact_number) VALUES ('Dup', (SELECT id FROM subjects WHERE name='Mathematics'), 'mary@example.com', '91234567');"
 # Expect: ERROR 1062 (23000): Duplicate entry 'mary@example.com' for key 'teachers.uq_teachers_email'
 
 # 4.2 Duplicate class name (FR-009) — bypass the API, write directly
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "INSERT INTO classes (level, name, form_teacher_email) VALUES ('Primary 1', 'Class 1A', 'bob@example.com');"
+  -e "INSERT INTO classes (level_id, name, form_teacher_id) VALUES ((SELECT id FROM levels WHERE name='Primary 1'), 'Class 1A', (SELECT id FROM teachers WHERE email='bob@example.com'));"
 # Expect: ERROR 1062 (23000): Duplicate entry 'Class 1A' for key 'classes.uq_classes_name'
 
 # 4.3 Duplicate form teacher (FR-008) — bypass the API, write directly
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "INSERT INTO classes (level, name, form_teacher_email) VALUES ('Primary 2', 'Class 2Dup', 'mary@example.com');"
-# Expect: ERROR 1062 (23000): Duplicate entry 'mary@example.com' for key 'classes.uq_classes_form_teacher'
+  -e "INSERT INTO classes (level_id, name, form_teacher_id) VALUES ((SELECT id FROM levels WHERE name='Primary 2'), 'Class 2Dup', (SELECT id FROM teachers WHERE email='mary@example.com'));"
+# Expect: ERROR 1062 (23000): Duplicate entry '<form_teacher_id>' for key 'classes.uq_classes_form_teacher'
 
 # 4.4 Missing form teacher (FR-007) — bypass the API, write directly
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "INSERT INTO classes (level, name, form_teacher_email) VALUES ('Primary 2', 'Class Ghost', 'ghost@example.com');"
+  -e "INSERT INTO classes (level_id, name, form_teacher_id) VALUES ((SELECT id FROM levels WHERE name='Primary 2'), 'Class Ghost', 999999);"
 # Expect: ERROR 1452 (23000): Cannot add or update a child row: a foreign key constraint fails
+#   (FK `fk_classes_form_teacher` — `classes.form_teacher_id` → `teachers.id`)
 ```
 
 **Acceptance check**: every direct `INSERT` is rejected with a MySQL
@@ -223,72 +235,65 @@ last word; the API is a convenience on top.
 
 ---
 
-## Scenario 5 — Schema is rebuilt from migrations alone (FR-016, SC-006)
+## Scenario 5 — Schema is user-prepared (FR-016, Session 2026-06-21)
 
-**Goal**: verify the schema can be recreated from scratch by running
-the migrations, with no manual SQL.
+**Goal**: verify the schema is owned by the user, not by the app's
+boot sequence. The `docker compose up` flow MUST NOT run a migration
+step.
 
 ```bash
-# 5.1 Tear down the containers AND the volume (so MySQL data is wiped)
-docker compose -f docker/docker-compose.yml down -v
+# 5.1 Tear down only the app container (MySQL is left running)
+docker compose -f docker/docker-compose.yml stop app
+docker compose -f docker/docker-compose.yml rm -f app
 
-# 5.2 Bring the stack back up; migrations run on first boot
-docker compose -f docker/docker-compose.yml up -d --build
-
-# 5.3 Wait for migrations to finish
-docker compose -f docker/docker-compose.yml logs -f app
-#   Look for: "Migrations run: 4"
-
-# 5.4 Verify the schema and seed data are present
+# 5.2 Verify the schema and seed data are still in MySQL
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
   -e "SHOW TABLES; SELECT COUNT(*) AS n_subjects FROM subjects; SELECT COUNT(*) AS n_levels FROM levels;"
 # Expect: 4 tables; 9 subjects; 10 levels
+
+# 5.3 Re-bring up the app (no migration step; the schema is already there)
+docker compose -f docker/docker-compose.yml up -d --build app
+docker compose -f docker/docker-compose.yml logs -f app
+#   Look for: "Listening on http://localhost:3000" (no migration log lines)
 ```
 
-**Acceptance check**: after `down -v` + `up -d --build`, the schema
-is identical to what it was before — 4 tables, both reference lists
-populated by their seed migrations, no manual SQL was needed.
+**Acceptance check**: after `stop app` + `rm -f app` + `up -d --build
+app`, the schema is unchanged — 4 tables, both reference lists still
+populated, no migration step ran. The application simply reconnects
+to the existing MySQL container. This is the Stage 1
+operational-rules contract.
 
 ---
 
-## Scenario 6 — Migrations are idempotent (FR-017, SC-006)
+## Scenario 6 — Removed (legacy migration idempotency check)
 
-**Goal**: verify the second-migration seed pattern is re-runnable
-without duplicating rows.
-
-```bash
-# 6.1 Manually re-run the schema and seed migrations (typeorm-ts-node-commonjs migration:run is idempotent)
-docker compose -f docker/docker-compose.yml exec app \
-  npx typeorm-ts-node-commonjs migration:run -d lib/db/data-source.ts
-
-# 6.2 Re-check the seed row counts (must be unchanged)
-docker compose -f docker/docker-compose.yml exec mysql \
-  mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "SELECT COUNT(*) AS n_subjects FROM subjects; SELECT COUNT(*) AS n_levels FROM levels;"
-# Expect: 9 / 10 (unchanged from before)
-```
-
-**Acceptance check**: re-running the migration set on a populated DB
-is a no-op. `INSERT IGNORE` skips the rows that violate the PK; the
-schema migrations use `CREATE TABLE IF NOT EXISTS`. The test is the
-single line "9 subjects, 10 levels" — if those numbers are still 9
-and 10, idempotency holds.
+> **This scenario is removed in Stage 1** (per FR-016,
+> Session 2026-06-21). The previous form of this scenario exercised
+> `typeorm-ts-node-commonjs migration:run` against an already-seeded
+> MySQL container and asserted that re-running the set was a no-op
+> (`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`). The migration set
+> (`InitSchema`, `SeedSubjects`, `InitClasses`, `SeedLevels`) is no
+> longer part of the project source, so this verification is
+> meaningless. The user-prepared MySQL is the schema source of
+> truth; the app does not own the schema lifecycle in Stage 1.
+> Preserved here as a numbered placeholder so the surrounding
+> scenarios stay aligned with the spec's SC-006 numbering.
 
 ---
 
 ## Scenario 7 — Persistence across server restart (SC-001, FR-012)
 
 **Goal**: verify data survives a server restart with all attributes
-intact.
+intact, including the `ulid` row handle (per FR-021).
 
 ```bash
 # 7.1 Create a teacher and a class
-curl -s -X POST http://localhost:3000/api/teachers \
+curl -s -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{"name":"Restart Teacher","subject":"Mathematics","email":"restart@example.com","contactNumber":"91234567"}'
 
-curl -s -X POST http://localhost:3000/api/classes \
+curl -s -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{"level":"Primary 1","name":"Class Restart","teacherEmail":"restart@example.com"}'
 
@@ -296,16 +301,19 @@ curl -s -X POST http://localhost:3000/api/classes \
 docker compose -f docker/docker-compose.yml restart app
 
 # 7.3 List teachers and classes
-curl -s http://localhost:3000/api/teachers | jq '.data[] | select(.email == "restart@example.com")'
-curl -s http://localhost:3000/api/classes | jq '.data[] | select(.name == "Class Restart")'
+curl -s http://localhost:3000/api/v1.0/teachers | jq '.data[] | select(.email == "restart@example.com")'
+curl -s http://localhost:3000/api/v1.0/classes | jq '.data[] | select(.name == "Class Restart")'
 
-# Expect (teacher): {"name":"Restart Teacher","subject":"Mathematics","email":"restart@example.com","contactNumber":"91234567"}
-# Expect (class):   {"level":"Primary 1","name":"Class Restart","formTeacher":{"name":"Restart Teacher"}}
+# Expect (teacher): {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Restart Teacher","subject":"Mathematics","email":"restart@example.com","contactNumber":"91234567"}
+# Expect (class):   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","level":"Primary 1","name":"Class Restart","formTeacher":{"name":"Restart Teacher"}}
 ```
 
 **Acceptance check**: both records are still present, with all
-attributes intact. The cross-feature FK is still intact (the class
-still resolves the form teacher by name).
+attributes intact (including `ulid` — the 26-character Crockford
+Base32 frontend-stable row handle). The cross-feature FK is still
+intact (the class still resolves the form teacher by name). The
+`ulid` returned on creation is the same `ulid` returned after
+restart — it is persisted, not regenerated.
 
 ---
 
@@ -318,12 +326,12 @@ same `teacherEmail` produce exactly one success and nine `409`s.
 # 8.1 Make sure the test teacher is NOT yet a form teacher (clean slate)
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "DELETE FROM classes WHERE form_teacher_email='restart@example.com';"
+  -e "DELETE FROM classes WHERE form_teacher_id=(SELECT id FROM teachers WHERE email='restart@example.com');"
 
 # 8.2 Fire 10 parallel POSTs with the same teacherEmail
 for i in $(seq 1 10); do
   curl -s -o /tmp/r$i.json -w "%{http_code}\n" \
-    -X POST http://localhost:3000/api/classes \
+    -X POST http://localhost:3000/api/v1.0/classes \
     -H "Content-Type: application/json" \
     -d "{\"level\":\"Primary 1\",\"name\":\"Class Race $i\",\"teacherEmail\":\"restart@example.com\"}" &
 done
@@ -340,7 +348,7 @@ grep -l "Internal server error" /tmp/r*.json | wc -l   # Expect: 0
 
 **Acceptance check**: exactly one submission succeeds; the other
 nine return `409` with `"Teacher already assigned"`. Zero `500`s. The
-race is serialised by `UNIQUE(classes.form_teacher_email)`; the
+race is serialised by `UNIQUE(classes.form_teacher_id)`; the
 pre-INSERT `findTeacherByEmail` is the *application-level* gate for
 the `404 vs 409` distinction but the DB constraint is what makes the
 race race-safe.
@@ -361,7 +369,7 @@ This scenario is best run as part of the integration test suite
 #     — already there as Class Restart.
 
 # 9.2 Try to insert another class with restart@example.com
-curl -s -i -X POST http://localhost:3000/api/classes \
+curl -s -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{"level":"Primary 2","name":"Class Partial","teacherEmail":"restart@example.com"}'
 # Expect: HTTP/1.1 409 Conflict
@@ -387,22 +395,22 @@ helper.
 features' data sets.
 
 ```bash
-# 10.1 Every teacher's `subject` resolves to an entry in `subjects.name`
+# 10.1 Every teacher's `subject_id` resolves to an entry in `subjects.id`
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "SELECT t.name AS teacher, t.subject FROM teachers t LEFT JOIN subjects s ON s.name = t.subject WHERE s.name IS NULL;"
+  -e "SELECT t.name AS teacher, t.subject_id FROM teachers t LEFT JOIN subjects s ON s.id = t.subject_id WHERE s.id IS NULL;"
 # Expect: empty result set
 
-# 10.2 Every class's `level` resolves to an entry in `levels.name`
+# 10.2 Every class's `level_id` resolves to an entry in `levels.id`
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "SELECT c.name AS class, c.level FROM classes c LEFT JOIN levels l ON l.name = c.level WHERE l.name IS NULL;"
+  -e "SELECT c.name AS class, c.level_id FROM classes c LEFT JOIN levels l ON l.id = c.level_id WHERE l.id IS NULL;"
 # Expect: empty result set
 
-# 10.3 Every class's `form_teacher_email` resolves to an entry in `teachers.email`
+# 10.3 Every class's `form_teacher_id` resolves to an entry in `teachers.id`
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
-  -e "SELECT c.name AS class, c.form_teacher_email FROM classes c LEFT JOIN teachers t ON t.email = c.form_teacher_email WHERE t.email IS NULL;"
+  -e "SELECT c.name AS class, c.form_teacher_id FROM classes c LEFT JOIN teachers t ON t.id = c.form_teacher_id WHERE t.id IS NULL;"
 # Expect: empty result set
 ```
 
@@ -412,29 +420,37 @@ internally consistent.
 
 ---
 
-## Scenario 11 — Reference-list response shape (FR-009c)
+## Scenario 11 — Reference-list response shape (FR-009c, FR-021)
 
-**Goal**: verify `GET /api/subjects` and `GET /api/levels` return the
-seeded list, filtered to `active = true`, in the agreed envelope.
+**Goal**: verify `GET /api/v1.0/subjects` and `GET /api/v1.0/levels`
+return the seeded list, filtered to `active = true`, in the agreed
+envelope — including the `ulid` row handle (per FR-021).
 
 ```bash
-# 11.1 GET /api/subjects
-curl -s http://localhost:3000/api/subjects | jq '.data | length'
+# 11.1 GET /api/v1.0/subjects
+curl -s http://localhost:3000/api/v1.0/subjects | jq '.data | length'
 # Expect: 9
 
-curl -s http://localhost:3000/api/subjects | jq '[.data[] | .name]'
+curl -s http://localhost:3000/api/v1.0/subjects | jq '[.data[] | .name]'
 # Expect: ["English", "Mathematics", "Science", "Chinese", "Malay", "Tamil", "Art", "Music", "Physical Education"]
 
-# 11.2 GET /api/levels
-curl -s http://localhost:3000/api/levels | jq '.data | length'
+curl -s http://localhost:3000/api/v1.0/subjects | jq '[.data[] | .ulid] | map(length) | unique'
+# Expect: [26]   # every ulid is exactly 26 characters
+
+# 11.2 GET /api/v1.0/levels
+curl -s http://localhost:3000/api/v1.0/levels | jq '.data | length'
 # Expect: 10
 
-curl -s http://localhost:3000/api/levels | jq '[.data[] | .name]'
+curl -s http://localhost:3000/api/v1.0/levels | jq '[.data[] | .name]'
 # Expect: ["Primary 1", "Primary 2", ..., "Secondary 4"]
+
+curl -s http://localhost:3000/api/v1.0/levels | jq '[.data[] | .ulid] | map(length) | unique'
+# Expect: [26]
 ```
 
 **Acceptance check**: 9 subjects, 10 levels, all `active: true`, no
-duplicates. The response shape matches `Subject` / `Level` in
+duplicates, every `ulid` is exactly 26 characters of Crockford
+Base32. The response shape matches `Subject` / `Level` in
 `./contracts/subjects.yaml` and `./contracts/levels.yaml`.
 
 ---
@@ -461,8 +477,8 @@ docker compose -f docker/docker-compose.test.yml up -d
 # Run the integration suite
 npm run test:integration
 # Expect: all *.spec.ts in tests/integration/ pass.
-#   - cross-cutting.spec.ts    — runs the SC-007 race test (10 concurrent POSTs); asserts exactly one 201 + nine 409s
-#   - migration.spec.ts        — tears down the MySQL volume, rebuilds from migrations alone (SC-006)
+#   - cross-cutting.spec.ts    — runs the SC-007 race test (10 concurrent POSTs); asserts exactly one 201 + nine 409s; asserts every response body carries `ulid`; asserts every endpoint lives under `/api/v1.0/`
+#   (No `migration.spec.ts` in Stage 1 — the schema is user-prepared per FR-016, Session 2026-06-21.)
 #   (plus the 001-teachers and 002-classes integration suites)
 
 docker compose -f docker/docker-compose.test.yml down
@@ -473,13 +489,15 @@ docker compose -f docker/docker-compose.test.yml down
 ## What to check on failure
 
 - **`docker compose -f docker/docker-compose.yml logs app`** —
-  application logs. Look for typeORM migration errors, unhandled
+  application logs. Look for typeORM connection errors, unhandled
   rejections, or 500 responses. The unhandled-rejection path
   *should* log the stack trace at `error` level and render
   `{ "error": "Internal server error" }` to the client.
+  **There is no migration log line in Stage 1** — if you see
+  `Migrations run: ...`, the boot sequence is running migrations
+  and the user-prepared-MySQL contract (FR-016) is being violated.
 - **`docker compose -f docker/docker-compose.yml logs mysql`** — DB
-  logs. Look for connection errors, constraint violation traces, or
-  migration failures.
+  logs. Look for connection errors or constraint violation traces.
 - **`docker compose -f docker/docker-compose.yml exec mysql mysql
   -uroot -p"$MYSQL_ROOT_PASSWORD" admin -e "SHOW TABLES; SELECT *
   FROM subjects; SELECT * FROM levels;"`** — manual inspection of
@@ -488,16 +506,19 @@ docker compose -f docker/docker-compose.test.yml down
   wrapper in `lib/api/route.ts` — that is the single source of truth
   for the cross-cutting rules. Any handler that does *not* go
   through `withApiContract` will skip the rules.
-- **For cross-feature FK issues**: verify the migrations ran in the
-  expected order. The app log should show
-  `[InitSchema, SeedSubjects, InitClasses, SeedLevels]`. If
-  `InitClasses` ran before `InitSchema`, the
-  `fk_classes_form_teacher → teachers.email` FK creation will fail.
+- **For cross-feature FK issues**: verify the user-prepared MySQL
+  container has the full Stage 1 schema: `subjects` with 9 rows,
+  `teachers`, `levels` with 10 rows, `classes`, with the audit
+  columns, `ulid CHAR(26) UNIQUE`, FK constraints
+  (`fk_teachers_subject`, `fk_classes_level`,
+  `fk_classes_form_teacher`), and `UNIQUE` indexes. Run
+  `SHOW CREATE TABLE teachers;` etc. to confirm.
 
 If a cross-cutting scenario fails, the most common causes are:
 
-1. The app container is still running the migrations on first boot
-   — wait 5–10 s and retry.
+1. The MySQL container was not prepared by the user before the app
+   container started — bring MySQL up first, run the user's SQL,
+   then bring the app up.
 2. A direct `INSERT` in a test violated a unique constraint but the
    test didn't expect the `1062` error code — fix the test, not the
    schema.
@@ -510,3 +531,7 @@ If a cross-cutting scenario fails, the most common causes are:
    through to the unhandled `throw e` → `500` path. Add the mapping.
 5. The `.env` for the app is missing `DB_HOST=mysql` — re-create
    from `.env.example`.
+6. The endpoint is being hit without the `/api/v1.0/` version prefix
+   — the request will route to Next.js as a non-existent path and
+   return a 404 from the framework, not from the cross-cutting
+   contract. Add the `/api/v1.0/` prefix (per FR-022).

@@ -20,6 +20,14 @@ info:
     the error envelope is an amendment to the 003 spec.
 
     See [spec.md FR-010..FR-015](../spec.md) for the canonical text.
+
+    All Stage 1 endpoints are exposed under the version prefix
+    `/api/v1.0/` (per `003-backend-api-db/spec.md` FR-022):
+    `POST /api/v1.0/teachers`, `GET /api/v1.0/teachers`,
+    `GET /api/v1.0/subjects`, `POST /api/v1.0/classes`,
+    `GET /api/v1.0/classes`, `GET /api/v1.0/levels`. The version
+    string `v1.0` is literal (not a placeholder for "current
+    major.minor"); future stages add `v1.1`, `v2.0`, etc.
 servers:
   - url: http://localhost:3000
     description: Local dev (docker compose up)
@@ -94,8 +102,8 @@ components:
       description: |
         Request body is missing, malformed, fails field-level
         validation, references an unknown / inactive `subject`
-        (POST /api/teachers), or references an unknown / inactive
-        `level` (POST /api/classes). Per
+        (POST /api/v1.0/teachers), or references an unknown / inactive
+        `level` (POST /api/v1.0/classes). Per
         `003-backend-api-db/spec.md` FR-013.
       content:
         application/json:
@@ -115,7 +123,7 @@ components:
     NotFound:
       description: |
         A referenced resource does not exist. In Stage 1, the only
-        404 path is `POST /api/classes` with a `teacherEmail` that
+        404 path is `POST /api/v1.0/classes` with a `teacherEmail` that
         does not match any registered teacher. Per
         `003-backend-api-db/spec.md` FR-013.
       content:
@@ -128,9 +136,9 @@ components:
       description: |
         A uniqueness or referential-integrity rule was violated. Per
         `003-backend-api-db/spec.md` FR-013. Three distinct cases:
-        duplicate teacher email (`POST /api/teachers`),
+        duplicate teacher email (`POST /api/v1.0/teachers`),
         duplicate class `(name)` or duplicate form teacher
-        (`POST /api/classes`).
+        (`POST /api/v1.0/classes`).
       content:
         application/json:
           schema:

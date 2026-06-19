@@ -25,18 +25,18 @@ source of truth per the [plan](./plan.md)).
 
 | Entity | Table | Per-feature owner | Stage 1 API | Notes |
 |---|---|---|---|---|
-| Teacher | `teachers` | [`001-teachers`](../001-teachers/data-model.md) | `POST /api/teachers`, `GET /api/teachers` | Natural PK = `email`; no surrogate id. |
-| Class | `classes` | [`002-classes`](../002-classes/data-model.md) | `POST /api/classes`, `GET /api/classes` | Surrogate `id` (hidden from the Stage 1 response). |
-| Subject | `subjects` | [`001-teachers`](../001-teachers/data-model.md) | `GET /api/subjects` | Reference list; seeded; read-only in Stage 1. |
-| Level | `levels` | [`002-classes`](../002-classes/data-model.md) | `GET /api/levels` | Reference list; seeded; read-only in Stage 1. |
+| Teacher | `teachers` | [`001-teachers`](../001-teachers/data-model.md) | `POST /api/v1.0/teachers`, `GET /api/v1.0/teachers` | Surrogate `id` PK (per FR-018); `email` preserved as `UNIQUE NOT NULL`. |
+| Class | `classes` | [`002-classes`](../002-classes/data-model.md) | `POST /api/v1.0/classes`, `GET /api/v1.0/classes` | Surrogate `id` PK (hidden from the Stage 1 response). |
+| Subject | `subjects` | [`001-teachers`](../001-teachers/data-model.md) | `GET /api/v1.0/subjects` | Surrogate `id` PK (per FR-018); `name` preserved as `UNIQUE NOT NULL`. |
+| Level | `levels` | [`002-classes`](../002-classes/data-model.md) | `GET /api/v1.0/levels` | Surrogate `id` PK (per FR-018); `name` preserved as `UNIQUE NOT NULL`. |
 
-**Relationships at a glance**:
+**Relationships at a glance** (per FR-019 — FKs reference `id`):
 
 | FK | Owner table | Source column | References | Constraint name (suggested) |
 |---|---|---|---|---|
-| Teacher → Subject | `teachers` | `subject` | `subjects.name` | `fk_teachers_subject` |
-| Class → Level | `classes` | `level` | `levels.name` | `fk_classes_level` |
-| Class → Teacher | `classes` | `form_teacher_email` | `teachers.email` | `fk_classes_form_teacher` |
+| Teacher → Subject | `teachers` | `subject_id` | `subjects.id` | `fk_teachers_subject` |
+| Class → Level | `classes` | `level_id` | `levels.id` | `fk_classes_level` |
+| Class → Teacher | `classes` | `form_teacher_id` | `teachers.id` | `fk_classes_form_teacher` |
 
 **Unique constraints at a glance**:
 
@@ -44,9 +44,25 @@ source of truth per the [plan](./plan.md)).
 |---|---|---|---|
 | `uq_teachers_email` | `teachers` | `email` | FR-006 (teacher email unique) |
 | `uq_classes_name` | `classes` | `name` | FR-009 (class name globally unique) |
-| `uq_classes_form_teacher` | `classes` | `form_teacher_email` | FR-008 (at most one class per teacher) |
-| `PRIMARY KEY (name)` | `subjects` | `name` | FR-009a (subject FK target) |
-| `PRIMARY KEY (name)` | `levels` | `name` | FR-009a (level FK target) |
+| `uq_classes_form_teacher` | `classes` | `form_teacher_id` | FR-008 (at most one class per teacher) |
+| `uq_subjects_name` | `subjects` | `name` | FR-009a (subject FK target — natural key preserved as UNIQUE) |
+| `uq_levels_name` | `levels` | `name` | FR-009a (level FK target — natural key preserved as UNIQUE) |
+| `uq_teachers_ulid` | `teachers` | `ulid` | FR-021 (ULID row handle, globally unique) |
+| `uq_subjects_ulid` | `subjects` | `ulid` | FR-021 (ULID row handle, globally unique) |
+| `uq_classes_ulid` | `classes` | `ulid` | FR-021 (ULID row handle, globally unique) |
+| `uq_levels_ulid` | `levels` | `ulid` | FR-021 (ULID row handle, globally unique) |
+
+**Audit columns (per FR-018 — applied to every table)**:
+
+| Column | Type | Default | Notes |
+|---|---|---|---|
+| `id` | `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` | — | Surrogate PK on every table. |
+| `ulid` | `CHAR(26) NOT NULL` (UNIQUE — separate `uq_*_ulid` index) | — | Per FR-021 — frontend-stable row handle, exposed in every API response. See §2.8. |
+| `created_at` | `DATETIME(6) NOT NULL` | `CURRENT_TIMESTAMP(6)` | Set once at insert. |
+| `created_by` | `VARCHAR(64) NOT NULL` | `'system'` | Actor identifier; set by application. |
+| `modified_at` | `DATETIME(6) NOT NULL` | `CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)` | Bumped on every update. |
+| `modified_by` | `VARCHAR(64) NOT NULL` | `'system'` | Actor identifier for the latest update. |
+| `version` | `INT NOT NULL` | `1` | typeORM `@VersionColumn` optimistic-lock counter. |
 
 ---
 
@@ -61,7 +77,7 @@ violate them.
 
 - **Mechanism**: `UNIQUE KEY uq_teachers_email (email)` on the
   `teachers` table.
-- **Race-safety**: two concurrent `POST /api/teachers` with the same
+- **Race-safety**: two concurrent `POST /api/v1.0/teachers` with the same
   email — at most one succeeds; the other fails with `ER_DUP_ENTRY`
   (1062). The route handler translates this to `409 Conflict` with
   `{ "error": "Email already in use" }`.
@@ -73,25 +89,26 @@ violate them.
 
 ### 2.2. Form-teacher referential integrity — FR-007
 
-- **Mechanism**: `FOREIGN KEY (form_teacher_email) REFERENCES
-  teachers(email)` on the `classes` table.
+- **Mechanism**: `FOREIGN KEY (form_teacher_id) REFERENCES
+  teachers(id)` on the `classes` table.
 - **Enforcement**: a `classes` row cannot exist without a matching
   `teachers` row.
 - **`ON DELETE`**: `RESTRICT` (MySQL default). Stage 1 has no
-  `DELETE /api/teachers`, so this is a future-stage decision. The
+  `DELETE /api/v1.0/teachers`, so this is a future-stage decision. The
   safe default is to refuse the delete and surface an error to the
   future endpoint.
-- **Application-level defence**: the `POST /api/classes` route handler
-  does `findTeacherByEmail(teacherEmail)` *before* the `INSERT` so it
-  can render `404 Teacher not found` cleanly. The FK is the second
-  line of defence for the race window.
+- **Application-level defence**: the `POST /api/v1.0/classes` route handler
+  resolves `formTeacherEmail` → `form_teacher_id` *before* the
+  `INSERT` (via a `findTeacherByEmail`) so it can render
+  `404 Teacher not found` cleanly. The FK is the second line of
+  defence for the race window.
 
 ### 2.3. Form-teacher uniqueness — FR-008
 
 - **Mechanism**: `UNIQUE KEY uq_classes_form_teacher
-  (form_teacher_email)` on the `classes` table.
+  (form_teacher_id)` on the `classes` table.
 - **Race-safety**: this is what `SC-007` pins down. Ten concurrent
-  `POST /api/classes` with the same `teacherEmail` — at most one
+  `POST /api/v1.0/classes` with the same `formTeacherEmail` — at most one
   succeeds; the other nine fail with `ER_DUP_ENTRY`. The route
   handler maps the failure to `409 Teacher already assigned`.
 - **Why a separate `UNIQUE` index, not just the FK**: the FK enforces
@@ -104,62 +121,119 @@ violate them.
   table. Class names are globally unique, not composite-unique on
   `(level, name)` (per [`002-classes/spec.md`](../002-classes/spec.md)
   Clarifications, Session 2026-06-18, Q3).
-- **Race-safety**: two concurrent `POST /api/classes` with the same
+- **Race-safety**: two concurrent `POST /api/v1.0/classes` with the same
   `name` — at most one succeeds; the other fails with `ER_DUP_ENTRY`
   and renders `409 Class name already in use`.
 
 ### 2.5. Reference-list referential integrity — FR-009a
 
 - **Mechanism**: two `FOREIGN KEY` constraints:
-  - `teachers.subject REFERENCES subjects.name`
-  - `classes.level REFERENCES levels.name`
-- **Application-level defence**: the Joi schemas for `POST /api/teachers`
-  and `POST /api/classes` are generated at boot from the active
+  - `teachers.subject_id REFERENCES subjects(id)`
+  - `classes.level_id REFERENCES levels(id)`
+- **Application-level defence**: the Joi schemas for `POST /api/v1.0/teachers`
+  and `POST /api/v1.0/classes` are generated at boot from the active
   entries in `subjects` and `levels`, so a request that references an
   unknown or inactive reference-list entry is rejected at validation
   time with `400 Invalid subject` / `400 Invalid level`. The FK is the
   backstop for direct writes that bypass the API.
-- **Seed discipline**: the reference lists are populated by separate
-  `-SeedSubjects` and `-SeedLevels` migrations (per FR-017). A
-  reference-list row that is referenced by a teacher or class
-  cannot be deactivated (per FR-009b); deactivation is out of
-  Stage 1 scope.
+- **Seed discipline**: the reference lists are populated by the user
+  against the user-prepared MySQL container (per FR-016,
+  Session 2026-06-21). A reference-list row that is referenced by a
+  teacher or class cannot be deactivated (per FR-009b); deactivation
+  is out of Stage 1 scope.
 
-### 2.6. Surrogate-id strategy
+### 2.6. Surrogate-id strategy (per FR-018, FR-019)
 
-- **`teachers`** — no surrogate id. `email` is the natural identifier
-  (per [`001-teachers/spec.md`](../001-teachers/spec.md)). The `id`
-  column is **not** in the `teachers` table at all.
-- **`subjects`, `levels`** — no surrogate id. `name` is the natural
-  PK. The tables are read-only and tiny (≤ 50 rows each); a surrogate
-  id is unnecessary.
-- **`classes`** — surrogate `id BIGINT UNSIGNED AUTO_INCREMENT` as
-  the PK. The `id` column **is not** exposed in the Stage 1 API
-  response (per [`002-classes/spec.md`](../002-classes/spec.md)
-  Clarifications, Session 2026-06-18, Q5). The column exists so a
-  future edit/delete endpoint can route by id without a migration.
+- **Every table** (`subjects`, `teachers`, `levels`, `classes`) carries
+  a surrogate `id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT` as the
+  primary key (per FR-018, Q1 of the Session 2026-06-19 audit-columns
+  clarification). The `id` is the canonical join key.
+- **Domain-natural identifiers are preserved as `UNIQUE NOT NULL`**:
+  `teachers.email`, `subjects.name`, `levels.name`, `classes.name`.
+  These are the values the Stage 1 public API exposes.
+- **Foreign keys reference `id`**, not natural keys (per FR-019):
+  `teachers.subject_id REFERENCES subjects(id)`,
+  `classes.level_id REFERENCES levels(id)`,
+  `classes.form_teacher_id REFERENCES teachers(id)`. FK column names
+  follow the pattern `<referenced-table-singular>_id`.
+- **`classes.id` is not exposed** in the Stage 1 API response (per
+  [`002-classes/spec.md`](../002-classes/spec.md) Clarifications,
+  Session 2026-06-18, Q5). The column exists so a future edit/delete
+  endpoint can route by id without a migration. The other tables'
+  `id` columns are internal-only as well — the API responses surface
+  the natural key (`email`, `name`) instead.
 
-### 2.7. Lifecycle / soft-delete
+### 2.7. Audit columns (per FR-018)
 
-- **No `status`, `archived`, `isDeleted`, `createdAt`, `updatedAt`,
-  or `version` columns** in any of the four tables in Stage 1.
-- Stage 1 is Create + Read only (per the Constitution's Stage Scope).
-- The `id` on `classes` is monotonic auto-increment; the spec does
-  not commit to a starting value or step. The only guarantee is
-  "uniqueness over the lifetime of the table".
+- Every table carries the six audit columns documented at the top of
+  this data-model (`id`, `created_at`, `created_by`, `modified_at`,
+  `modified_by`, `version`).
+- **Concurrency**: the `version` column is the optimistic-lock
+  counter managed by typeORM's `@VersionColumn`. A stale-version
+  save produces `OptimisticLockVersionMismatchError`, which the API
+  layer maps to HTTP `409 Conflict` (consistent with FR-013's other
+  409 mappings).
+- **Lifecycle / soft-delete**: still no `status`, `archived`, or
+  `isDeleted` columns in Stage 1. Audit timestamps (`created_at` /
+  `modified_at`) replace the `createdAt` / `updatedAt` placeholder
+  pattern — they are the project's authoritative row-mutation
+  timestamps.
+
+### 2.8. ULID column (per FR-021)
+
+- Every table (`subjects`, `teachers`, `levels`, `classes`) carries
+  a `ulid CHAR(26) NOT NULL` column, generated server-side by the
+  [`ulid`](https://www.npmjs.com/package/ulid) npm package on every
+  insert (per FR-021 — Session 2026-06-20 ULID clarification). The
+  column is the **frontend-stable row handle**: it is exposed in
+  every Stage 1 GET and POST response so the frontend can cache it
+  against the row and route future edit/update operations by
+  `ulid` without depending on the surrogate `id`.
+- The `ulid` column is the **explicit exception to FR-020** ("audit
+  columns are hidden from API responses"). Audit columns remain
+  hidden; `ulid` is exposed.
+- **`UNIQUE` index per table**: `uq_teachers_ulid`,
+  `uq_subjects_ulid`, `uq_classes_ulid`, `uq_levels_ulid` — added
+  in the same migration that creates each table. A duplicate `ulid`
+  surfaces as `ER_DUP_ENTRY` and the route handler maps it to
+  `409` (consistent with the other 409 cases in FR-013).
+- **`ulid` is NOT a foreign-key target**. FKs continue to reference
+  the surrogate `id` (per FR-019). The typeORM entity declares
+  `@Column({ type: "char", length: 26, unique: true }) ulid!: string`
+  — no `@ManyToOne` against `ulid`.
+- **Wire shape**: `ulid` is the **first property** in every entity's
+  response shape, ahead of the natural-key fields, so it is the
+  property a frontend cache key is built around.
+  Example `POST /api/v1.0/teachers` 201 body:
+  ```json
+  {
+    "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T",
+    "name": "Alice Tan",
+    "subject": "Mathematics",
+    "email": "alice@example.com",
+    "contactNumber": "91234567"
+  }
+  ```
+- **Generation site**: a thin `lib/ulid.ts` wrapper exports
+  `generateUlid()`; the entity `@BeforeInsert()` hook (or the
+  repository helper) calls it once and assigns the value to the
+  `ulid` property. The cross-cutting wrapper lives in 003; the
+  per-entity hook lives in 001 / 002.
 
 ---
 
-## 3. Reference-list seed pattern (FR-017)
+## 3. Reference-list seed pattern (FR-016, Session 2026-06-21)
 
-Both `subjects` and `levels` are populated by **separate migrations**
-that follow the schema migration that creates each table. The seed
-migrations use `INSERT IGNORE` so re-running them is a no-op.
+Both `subjects` and `levels` are populated by the **user's own SQL**
+against the user-prepared MySQL container. There is no typeORM
+migration runner, no `npm run seed` step, no boot-time seeder, and
+no `lib/db/migrations/` directory in Stage 1 (per FR-016). The
+application is read/write at runtime only.
 
 ### 3.1. `subjects` seed list
 
-Owned by [`001-teachers`](../001-teachers/data-model.md); delivered by
-migration `1700000000001-SeedSubjects.ts`:
+Owned by [`001-teachers`](../001-teachers/data-model.md); inserted by
+the user against the user-prepared MySQL container (Stage 1 default):
 
 | `name` | `active` |
 |---|---|
@@ -175,8 +249,8 @@ migration `1700000000001-SeedSubjects.ts`:
 
 ### 3.2. `levels` seed list
 
-Owned by [`002-classes`](../002-classes/data-model.md); delivered by
-migration `1700000000003-SeedLevels.ts`:
+Owned by [`002-classes`](../002-classes/data-model.md); inserted by the
+user against the user-prepared MySQL container (Stage 1 default):
 
 | `name` | `active` |
 |---|---|
@@ -191,49 +265,77 @@ migration `1700000000003-SeedLevels.ts`:
 | Secondary 3 | true |
 | Secondary 4 | true |
 
-### 3.3. Idempotency contract
+### 3.3. Schema-preparation contract
 
-- **Schema migrations (`InitSchema`, `InitClasses`)**: use `CREATE
-  TABLE IF NOT EXISTS` so re-running on a populated DB is a no-op.
-- **Seed migrations (`SeedSubjects`, `SeedLevels`)**: use `INSERT
-  IGNORE` so re-running on a populated DB is a no-op. `INSERT
-  IGNORE` skips rows that violate the primary-key `UNIQUE` constraint
-  but applies the rest.
-- **`docker compose up` runs every migration in timestamp order on
-  every boot.** This is the property the Constitution's Principle V
-  (Simplicity) leans on — no separate `npm run seed` step, no
-  boot-time seeder, no manual SQL file. The README contract is
-  satisfied by a single command.
+- The MySQL container is prepared by the user with the full Stage 1
+  schema: `subjects` (9 rows), `teachers`, `levels` (10 rows),
+  `classes` tables; the `id` surrogate PK, the six audit columns,
+  the `ulid CHAR(26) UNIQUE` column (per FR-021), the FK constraints
+  (`fk_teachers_subject`, `fk_classes_level`,
+  `fk_classes_form_teacher`), the `UNIQUE` indexes
+  (`uq_teachers_email`, `uq_teachers_ulid`, `uq_subjects_name`,
+  `uq_subjects_ulid`, `uq_levels_name`, `uq_levels_ulid`,
+  `uq_classes_name`, `uq_classes_form_teacher`, `uq_classes_ulid`).
+- The `docker compose up` boot sequence MUST NOT run a
+  `typeorm-ts-node-commonjs migration:run` step or any equivalent
+  schema-creation / seed / bootstrap step. The application is
+  read/write at runtime only.
+- This is the property the Constitution's Principle V (Simplicity)
+  leans on — no separate `npm run seed` step, no boot-time seeder,
+  no manual SQL file run by the application. The schema and seed
+  data are entirely under user control outside the app boot.
 
 ---
 
-## 4. The full migration set
+## 4. Migration history (legacy — superseded by FR-016, Session 2026-06-21)
 
-The four typeORM migrations run in this order on `docker compose up`.
-The timestamp prefix in the file name is what determines the run
-order; there is no application-level orchestration.
+> **The four typeORM migrations previously documented in this section
+> (`InitSchema`, `SeedSubjects`, `InitClasses`, `SeedLevels`) are
+> removed from the project source in Stage 1** (per FR-016 and the
+> Session 2026-06-21 operational-rules clarification). The MySQL
+> schema, audit columns, ULID column, FK constraints, UNIQUE
+> indexes, and the `subjects` / `levels` reference-list seed data
+> are all created by the user against the user-prepared MySQL
+> container. This §4 is preserved for the migration history only.
+
+The previous four-migration set ran in timestamp order on
+`docker compose up`. The timestamp prefix in the file name was
+what determined the run order; there was no application-level
+orchestration. Each schema migration created its tables with the
+full audit pattern (`id` PK, `ulid CHAR(26) UNIQUE` per FR-021,
+`created_at`, `created_by`, `modified_at`, `modified_by`,
+`version`); FK columns followed the
+`<referenced-table-singular>_id` pattern and referenced `id` (per
+FR-019, FR-018).
 
 | # | Timestamp | File | Owner | Purpose |
 |---|---|---|---|---|
-| 1 | 1700000000000 | `InitSchema.ts` | `001-teachers` | Creates `subjects`, `teachers`. Adds `UNIQUE(teachers.email)`, `FK(teachers.subject → subjects.name)`. |
-| 2 | 1700000000001 | `SeedSubjects.ts` | `001-teachers` | `INSERT IGNORE` the Stage 1 subjects seed list. |
-| 3 | 1700000000002 | `InitClasses.ts` | `002-classes` | Creates `levels`, `classes`. Adds `UNIQUE(classes.name)`, `UNIQUE(classes.form_teacher_email)`, `FK(classes.level → levels.name)`, `FK(classes.form_teacher_email → teachers.email)`. |
-| 4 | 1700000000003 | `SeedLevels.ts` | `002-classes` | `INSERT IGNORE` the Stage 1 levels seed list. |
+| 1 | 1700000000000 | `InitSchema.ts` | `001-teachers` | Creates `subjects (id PK, ulid UNIQUE, name UNIQUE NOT NULL, active, +audit)` and `teachers (id PK, ulid UNIQUE, name, subject_id FK → subjects.id, email UNIQUE NOT NULL, contact_number, +audit)`. |
+| 2 | 1700000000001 | `SeedSubjects.ts` | `001-teachers` | `INSERT IGNORE` the Stage 1 subjects seed list (with explicit id and ulid values). |
+| 3 | 1700000000002 | `InitClasses.ts` | `002-classes` | Creates `levels (id PK, ulid UNIQUE, name UNIQUE NOT NULL, active, +audit)` and `classes (id PK, ulid UNIQUE, level_id FK → levels.id, name UNIQUE, form_teacher_id UNIQUE FK → teachers.id, +audit)`. |
+| 4 | 1700000000003 | `SeedLevels.ts` | `002-classes` | `INSERT IGNORE` the Stage 1 levels seed list (with explicit id and ulid values). |
 
-**Why 003 doesn't add its own migration**: 003 has no schema change of
-its own. The cross-cutting constraints (FKs, unique indexes) live in
-the 001 and 002 schema migrations because that is where the
-referencing tables are created. The cross-cutting **rule** (e.g.,
-"form-teacher email is unique") is documented in this data-model and
-in [research.md §3.5](./research.md#35-cross-feature-referential-integrity-fr-007-fr-009a-fr-009b);
-the cross-cutting **mechanism** lives in the per-feature migration
-that creates the referencing column.
+**Why 003 didn't add its own migration**: 003 had no schema change
+of its own. The cross-cutting constraints (FKs, unique indexes,
+audit columns) lived in the 001 and 002 schema migrations because
+that was where the referencing tables were created. The
+cross-cutting **rule** (e.g., "form-teacher uniqueness", "audit
+columns on every table") is documented in this data-model and in
+[research.md §3.5](./research.md#35-cross-feature-referential-integrity-fr-007-fr-009a-fr-009b);
+the cross-cutting **mechanism** lived in the per-feature migration
+that created the referencing column.
 
-**The 003 plan does, however, own the *order* and the *idempotency
+> **Note**: This section supersedes the older "natural-key FK" wording
+> (e.g., `FK(teachers.subject → subjects.name)`) — that wording
+> predates the Session 2026-06-19 audit-columns clarification and is
+> preserved here only for the migration history.
+
+**The 003 plan previously owned the *order* and the *idempotency
 contract*** — the verification that running the set on a clean MySQL
-container produces the expected schema, and that re-running it on a
-populated container is a no-op. That verification lives in the
-integration test suite (`tests/integration/migration.spec.ts`).
+container produced the expected schema, and that re-running it on
+a populated container was a no-op. That verification lived in the
+integration test suite (`tests/integration/migration.spec.ts`),
+which is removed in Stage 1.
 
 ---
 
@@ -254,33 +356,60 @@ data-models for the entity code and the Joi schema.
 
 | Column | Type | Constraint | Owner |
 |---|---|---|---|
+| `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | `PRIMARY KEY` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `ulid` | `CHAR(26)` | required, `UNIQUE` (`uq_teachers_ulid`, per FR-021) | [`001-teachers`](../001-teachers/data-model.md) |
 | `name` | `VARCHAR(255)` | required | [`001-teachers`](../001-teachers/data-model.md) |
-| `subject` | `VARCHAR(64)` | required, `FK → subjects.name` | [`001-teachers`](../001-teachers/data-model.md) |
-| `email` | `VARCHAR(254)` | required, `UNIQUE` | [`001-teachers`](../001-teachers/data-model.md) |
-| `contact_number` | `CHAR(8)` | required, regex `/^[89]\d{7}$/` | [`001-teachers`](../001-teachers/data-model.md) |
+| `subject_id` | `BIGINT UNSIGNED` | required, `FK → subjects.id` | [`001-teachers`](../001-teachers/data-model.md) |
+| `email` | `VARCHAR(254)` | required, `UNIQUE NOT NULL` (preserved natural key) | [`001-teachers`](../001-teachers/data-model.md) |
+| `contact_number` | `CHAR(8)` | required, regex `/^\d{8}$/` (no leading-digit restriction — per FR-004, Session 2026-06-21) | [`001-teachers`](../001-teachers/data-model.md) |
+| `created_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6)` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `created_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `modified_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)` | [`001-teachers`](../001-teachers/data-model.md) |
+| `modified_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `version` | `INT` | `DEFAULT 1` (typeORM `@VersionColumn`) | [`001-teachers`](../001-teachers/data-model.md) |
 
 ### 5.2. `classes`
 
 | Column | Type | Constraint | Owner |
 |---|---|---|---|
 | `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | `PRIMARY KEY` (hidden from Stage 1 API response) | [`002-classes`](../002-classes/data-model.md) |
-| `level` | `VARCHAR(64)` | required, `FK → levels.name` | [`002-classes`](../002-classes/data-model.md) |
+| `ulid` | `CHAR(26)` | required, `UNIQUE` (`uq_classes_ulid`, per FR-021) | [`002-classes`](../002-classes/data-model.md) |
+| `level_id` | `BIGINT UNSIGNED` | required, `FK → levels.id` (per FR-019) | [`002-classes`](../002-classes/data-model.md) |
 | `name` | `VARCHAR(255)` | required, `UNIQUE` (global) | [`002-classes`](../002-classes/data-model.md) |
-| `form_teacher_email` | `VARCHAR(254)` | required, `UNIQUE`, `FK → teachers.email` | [`002-classes`](../002-classes/data-model.md) |
+| `form_teacher_id` | `BIGINT UNSIGNED` | required, `UNIQUE`, `FK → teachers.id` (per FR-019) | [`002-classes`](../002-classes/data-model.md) |
+| `created_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6)` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `created_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `modified_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)` | [`002-classes`](../002-classes/data-model.md) |
+| `modified_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `version` | `INT` | `DEFAULT 1` (typeORM `@VersionColumn`) | [`002-classes`](../002-classes/data-model.md) |
 
 ### 5.3. `subjects`
 
 | Column | Type | Constraint | Owner |
 |---|---|---|---|
-| `name` | `VARCHAR(64)` | `PRIMARY KEY` (natural PK for the reference list) | [`001-teachers`](../001-teachers/data-model.md) |
+| `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | `PRIMARY KEY` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `ulid` | `CHAR(26)` | required, `UNIQUE` (`uq_subjects_ulid`, per FR-021) | [`001-teachers`](../001-teachers/data-model.md) |
+| `name` | `VARCHAR(64)` | required, `UNIQUE NOT NULL` (preserved natural key) | [`001-teachers`](../001-teachers/data-model.md) |
 | `active` | `BOOLEAN` default `true` | required | [`001-teachers`](../001-teachers/data-model.md) |
+| `created_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6)` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `created_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `modified_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)` | [`001-teachers`](../001-teachers/data-model.md) |
+| `modified_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`001-teachers`](../001-teachers/data-model.md) |
+| `version` | `INT` | `DEFAULT 1` (typeORM `@VersionColumn`) | [`001-teachers`](../001-teachers/data-model.md) |
 
 ### 5.4. `levels`
 
 | Column | Type | Constraint | Owner |
 |---|---|---|---|
-| `name` | `VARCHAR(64)` | `PRIMARY KEY` (natural PK for the reference list) | [`002-classes`](../002-classes/data-model.md) |
+| `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | `PRIMARY KEY` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `ulid` | `CHAR(26)` | required, `UNIQUE` (`uq_levels_ulid`, per FR-021) | [`002-classes`](../002-classes/data-model.md) |
+| `name` | `VARCHAR(64)` | required, `UNIQUE NOT NULL` (preserved natural key) | [`002-classes`](../002-classes/data-model.md) |
 | `active` | `BOOLEAN` default `true` | required | [`002-classes`](../002-classes/data-model.md) |
+| `created_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6)` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `created_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `modified_at` | `DATETIME(6)` | `DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)` | [`002-classes`](../002-classes/data-model.md) |
+| `modified_by` | `VARCHAR(64)` | `DEFAULT 'system'` (per FR-018) | [`002-classes`](../002-classes/data-model.md) |
+| `version` | `INT` | `DEFAULT 1` (typeORM `@VersionColumn`) | [`002-classes`](../002-classes/data-model.md) |
 
 ---
 
@@ -294,7 +423,7 @@ Inherited from the per-feature specs:
   Clarifications, Session 2026-06-18).
 - ≤ 50 entries in each reference list (`subjects`, `levels`).
 - No pagination. No batch endpoints. No soft-delete. No audit log.
-- The `GET /api/classes` JOIN against `teachers` is O(M log N) for
+- The `GET /api/v1.0/classes` JOIN against `teachers` is O(M log N) for
   M classes and N teachers; at the Stage 1 upper bound it is well
   under 5 ms on a dev laptop.
 
@@ -304,34 +433,49 @@ Inherited from the per-feature specs:
 
 - No PUT / PATCH / DELETE endpoints. Stage 1 is Create + Read only
   (per the Constitution's Stage Scope).
-- No `createdAt` / `updatedAt` audit columns. Stage 1 doesn't need
-  them; add in a follow-up migration if audit becomes necessary.
 - No soft-delete columns. Stage 1 has no delete; add in a follow-up
   migration if soft-delete is required.
-- No optimistic locking (`version` column). Stage 1 is Create + Read;
-  no update path to race on.
 - No composite `(level, name)` uniqueness on `classes`. Uniqueness
   is **global** on `name` (per the 002 spec Clarifications, Q3).
-- No `id` exposure in the Stage 1 `classes` API response. The
-  surrogate id is hidden in the route handler's `toJSON` mapping.
+- No `id` exposure in any Stage 1 API response. The surrogate id is
+  hidden in each route handler's `toJSON` mapping; the API surface
+  continues to use natural keys (`email`, `name`) plus the new
+  `ulid` row handle (per FR-021).
 - No admin authoring of `subjects` / `levels`. Both are read-only in
   Stage 1. Admin authoring is a future-stage amendment.
+- No FK on `ulid`. The column is the frontend-stable row handle
+  (per FR-021), not a join target. FKs continue to reference the
+  surrogate `id` (per FR-019).
 
 ---
 
-## 8. Migration inventory (one-pager)
+## 8. Migration inventory (legacy — superseded by FR-016, Session 2026-06-21)
 
-The full four-step migration set, run by the app container on
-`docker compose up`:
+> **Stage 1 has no migration set.** The four typeORM migrations
+> previously documented in this section (`InitSchema`, `SeedSubjects`,
+> `InitClasses`, `SeedLevels`) are removed from the project source
+> per FR-016 and the Session 2026-06-21 operational-rules
+> clarification. The MySQL schema, audit columns (per FR-018),
+> `ulid` column (per FR-021), FK constraints, UNIQUE indexes, and
+> the `subjects` / `levels` reference-list seed data are all
+> created by the user against the user-prepared MySQL container.
+> This §8 is preserved for the migration history only.
+
+The previous four-step migration set was run by the app container on
+`docker compose up`. The audit columns (per FR-018) and the `ulid`
+column (per FR-021) were created in each schema migration alongside
+the table itself — there was no separate "add audit columns" /
+"add ulid column" migration because Stage 1's DB had not yet been
+seeded with live data.
 
 | # | Timestamp | File | Creates / Inserts |
 |---|---|---|---|
-| 1 | 1700000000000 | `InitSchema.ts` | `subjects (name PK, active)`, `teachers (name, subject FK, email UNIQUE, contact_number)` |
-| 2 | 1700000000001 | `SeedSubjects.ts` | 9 rows into `subjects` (English, Mathematics, Science, Chinese, Malay, Tamil, Art, Music, Physical Education) |
-| 3 | 1700000000002 | `InitClasses.ts` | `levels (name PK, active)`, `classes (id PK, level FK, name UNIQUE, form_teacher_email UNIQUE FK → teachers.email)` |
-| 4 | 1700000000003 | `SeedLevels.ts` | 10 rows into `levels` (Primary 1–6, Secondary 1–4) |
+| 1 | 1700000000000 | `InitSchema.ts` | `subjects (id PK, ulid UNIQUE, name UNIQUE NOT NULL, active, +audit)`, `teachers (id PK, ulid UNIQUE, name, subject_id FK → subjects.id, email UNIQUE NOT NULL, contact_number, +audit)` |
+| 2 | 1700000000001 | `SeedSubjects.ts` | 9 rows into `subjects` (English, Mathematics, Science, Chinese, Malay, Tamil, Art, Music, Physical Education) with explicit id and ulid values |
+| 3 | 1700000000002 | `InitClasses.ts` | `levels (id PK, ulid UNIQUE, name UNIQUE NOT NULL, active, +audit)`, `classes (id PK, ulid UNIQUE, level_id FK → levels.id, name UNIQUE, form_teacher_id UNIQUE FK → teachers.id, +audit)` |
+| 4 | 1700000000003 | `SeedLevels.ts` | 10 rows into `levels` (Primary 1–6, Secondary 1–4) with explicit id and ulid values |
 
-Re-running the set on a populated MySQL container is a no-op
+Re-running the set on a populated MySQL container was a no-op
 (`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`). The verification
-that this property holds is the `tests/integration/migration.spec.ts`
-test.
+that this property held was the `tests/integration/migration.spec.ts`
+test, which is removed in Stage 1.

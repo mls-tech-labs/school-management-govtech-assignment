@@ -13,7 +13,8 @@ the 003 feature specifically owns:
 - the cross-cutting HTTP contract (status codes, error envelope, content-type
   gate, retry semantics for 503),
 - the cross-cutting data-integrity contract (FKs, unique indexes, race-safety),
-- the migration-order discipline that ties 001 and 002 into one coherent set,
+- the user-prepared MySQL contract that ties 001 and 002 together (per
+  FR-016, Session 2026-06-21),
 - and the seed-list pattern that `subjects` and `levels` share.
 
 ---
@@ -26,9 +27,14 @@ new tables** (those live with 001/002), **no new endpoints** (those live
 with 001/002), and **no new UI**. Its deliverables are:
 
 1. The `lib/api/` cross-cutting helpers used by every route handler
-   (`errorEnvelope`, `jsonError`, `jsonCreated`, `requireJson`).
-2. The migration set ordering and the second-migration seed-list pattern
-   (per FR-017).
+   (`errorEnvelope`, `jsonError`, `jsonCreated`, `requireJson`, and
+   the `withApiContract` wrapper that enforces the `/api/v1.0/`
+   version prefix per FR-022).
+2. The user-prepared MySQL contract — the cross-cutting schema,
+   audit columns, ULID column, FK constraints, UNIQUE indexes, and
+   reference-list seed data are created by the user (per FR-016,
+   Session 2026-06-21). There is no typeORM migration runner in
+   Stage 1.
 3. The cross-feature `FOREIGN KEY` discipline (per FR-007, FR-009a,
    FR-009b).
 4. The single source of truth for the status-code table (per FR-013).
@@ -54,9 +60,11 @@ with 001/002), and **no new UI**. Its deliverables are:
   migration order, and *one* FK discipline. Two contracts would
   inevitably drift.
 - **Make 003 a thin README / no-code feature**: rejected — the spec
-  requires explicit `data-model.md` deliverables, unit tests, and
-  migration code (FR-016, FR-017, SC-006). The feature is small but it
-  is *not* empty.
+  requires explicit `data-model.md` deliverables and unit tests. The
+  feature is small but it is *not* empty. (FR-016 and FR-017 are no
+  longer the source of migration code in Stage 1 — they are
+  superseded by the user-prepared MySQL contract — but the
+  `data-model.md` deliverable is still required.)
 
 ---
 
@@ -68,10 +76,10 @@ file may add or override entries.
 
 | Condition | Status | Body envelope | Notes |
 |---|---|---|---|
-| `POST` body validates, row inserted | `201 Created` | `{ ...entity }` | The `201` body is the entity, per `POST /api/teachers` and `POST /api/classes` examples in the assignment |
+| `POST` body validates, row inserted | `201 Created` | `{ ...entity }` | The `201` body is the entity, per `POST /api/v1.0/teachers` and `POST /api/v1.0/classes` examples in the assignment |
 | `GET` list returns (any number, including 0) | `200 OK` | `{ "data": [...] }` | Empty array is `200`, not `204` |
 | Body missing / malformed / fails Joi / fails extra-field policy | `400 Bad Request` | `{ "error": "..." }` | All `400`s share the envelope |
-| `POST /api/classes` with unknown `teacherEmail` | `404 Not Found` | `{ "error": "Teacher not found" }` | Teachers-only — see below |
+| `POST /api/v1.0/classes` with unknown `teacherEmail` | `404 Not Found` | `{ "error": "Teacher not found" }` | Teachers-only — see below |
 | Duplicate email / duplicate class name / duplicate form teacher / unknown subject / unknown level | `409 Conflict` | `{ "error": "..." }` | All integrity violations share the envelope |
 | `Content-Type` is not `application/json` on a body-carrying request | `415 Unsupported Media Type` | `{ "error": "Content-Type must be application/json" }` | Enforced by `requireJson()` at the top of every body-carrying route handler |
 | Unhandled server failure | `500 Internal Server Error` | `{ "error": "Internal server error" }` | Stack traces NEVER leak; logger records them |
@@ -88,10 +96,10 @@ file may add or override entries.
   automated test tools". Splitting the table across plans makes that
   adherence harder to audit. 003 owns it.
 - `404 Not Found` is **teachers-only** — the assignment exposes no
-  "GET /api/teachers/:id" or "GET /api/classes/:id", so a `404` is
-  only meaningful as "the form teacher referenced by the new class
-  does not exist". The table makes this explicit; a future
-  `GET /api/teachers/:id` would extend the table in a follow-up
+  "GET /api/v1.0/teachers/:id" or "GET /api/v1.0/classes/:id", so a
+  `404` is only meaningful as "the form teacher referenced by the
+  new class does not exist". The table makes this explicit; a future
+  `GET /api/v1.0/teachers/:id` would extend the table in a follow-up
   amendment.
 
 **Alternatives considered**:
@@ -165,58 +173,65 @@ export function withApiContract<T>(
 
 ---
 
-## 3.4. Reference-list seed pattern (FR-017) — second-migration idempotent insert
+## 3.4. Reference-list seed pattern (FR-016, Session 2026-06-21) — user-prepared MySQL, no boot-time seeder
 
-**Decision**: The `subjects` and `levels` reference tables are populated
-by **separate migrations from the schema migrations**, named with a
-distinct timestamp suffix (`-SeedSubjects`, `-SeedLevels`). Each
-seed migration uses `INSERT IGNORE` so re-running it on a populated
-database is a no-op. There is **no** boot-time seeder, no separate
-`npm run seed` step, no manual SQL file, no `db:seed` script.
+**Decision**: The `subjects` and `levels` reference tables are
+populated by **the user** against the **user-prepared MySQL
+container** (per FR-016, Session 2026-06-21 operational-rules
+clarification). There is no typeORM migration runner, no `lib/db/
+migrations/` directory, no `npm run seed` step, no boot-time seeder,
+and no manual SQL file run by the application in Stage 1. The
+application is read/write at runtime only — it does not bootstrap
+or seed the database.
 
-**Final migration set (after all three plans run)**:
-
-| Timestamp | File | Owner | Purpose |
-|---|---|---|---|
-| 1700000000000 | `InitSchema.ts` | 001-teachers | `subjects`, `teachers`; `UNIQUE(teachers.email)`; `FK(teachers.subject → subjects.name)` |
-| 1700000000001 | `SeedSubjects.ts` | 001-teachers | `INSERT IGNORE` the Stage 1 subjects seed |
-| 1700000000002 | `InitClasses.ts` | 002-classes | `levels`, `classes`; `UNIQUE(classes.name)`; `UNIQUE(classes.form_teacher_email)`; `FK(classes.level → levels.name)`; `FK(classes.form_teacher_email → teachers.email)` |
-| 1700000000003 | `SeedLevels.ts` | 002-classes | `INSERT IGNORE` the Stage 1 levels seed |
+> **Legacy note**: The earlier Stage 1 plan split the seed step into
+> separate typeORM migrations (`SeedSubjects`, `SeedLevels`) named
+> with distinct timestamps and run alongside the schema migrations
+> on `docker compose up`. That design is **removed from Stage 1**
+> per FR-016 and the Session 2026-06-21 clarification. The legacy
+> four-migration set is documented in
+> [data-model.md §4](./data-model.md#4-migration-history-legacy--superseded-by-fr-016-session-2026-06-21)
+> and
+> [data-model.md §8](./data-model.md#8-migration-inventory-legacy--superseded-by-fr-016-session-2026-06-21)
+> for the migration history only.
 
 **Rationale**:
-- The 003 spec Clarifications, Session 2026-06-18 (Q1, Q4) pin this
-  exactly: "Second migration (separate from the schema migration)
-  that idempotently inserts the seed list. The seed list is inside
-  the version-controlled migration set, runs alongside the schema
-  migration on `docker compose up`, and is idempotent on subsequent
-  boots. No separate `npm run seed` step, no boot-time seeder, no
-  manual SQL file."
-- `INSERT IGNORE` is the right tool: it skips rows that violate the
-  primary-key `UNIQUE` constraint but applies the rest. This makes
-  the migration safe to re-run on a populated DB.
-- typeORM migrations are ordered by the timestamp prefix in the file
-  name. Putting `-SeedSubjects` and `-SeedLevels` *after* the schema
-  migration that creates the table is mechanical; there is no
-  application code to coordinate.
-- Avoiding a separate `npm run seed` keeps the
-  `docker compose up` experience to a single command (per the
-  Constitution's "one process" rule and the assignment's "Clear
-  instructions to run a working local instance" requirement in the
-  `README.md` contract).
+- The 003 spec Clarifications, Session 2026-06-21 (Q2) collapsed
+  this rule into a single operational constraint: the user prepares
+  the MySQL container with the full Stage 1 schema (`subjects` with
+  the 9 seed rows, `teachers`, `levels` with the 10 seed rows,
+  `classes`), audit columns, ULID column, FK constraints, and
+  UNIQUE indexes. The application is read/write at runtime only;
+  `docker compose up` MUST NOT run a migration step.
+- The earlier Session 2026-06-18 Q1/Q4 wording — "second migration
+  that idempotently inserts the seed list, runs alongside the
+  schema migration on `docker compose up`, idempotent on subsequent
+  boots, no separate `npm run seed` step" — is preserved as a
+  historical artefact of the migration-based design but no longer
+  applies in Stage 1.
+- The single-command `docker compose up` experience is preserved
+  even without the migration set: the user prepares MySQL once,
+  then `docker compose up` brings up only the app container. The
+  app container connects to the existing MySQL and serves traffic.
+- Constitution Principle V (Simplicity) is satisfied: no separate
+  `npm run seed`, no boot-time seeder, no manual SQL file run by
+  the app.
 
 **Alternatives considered**:
-- **Boot-time seeder in the app code** (`if (!subjects.length) seed()`):
-  rejected — adds an app-code path that can race with a concurrent
-  `GET /api/subjects`, and the seeder would have to handle
-  re-deploys that wipe the seed list out of band. A migration is
-  the right place for "the data this app version needs to run".
+- **Boot-time seeder in the app code** (`if (!subjects.length)
+  seed()`): rejected — adds an app-code path that can race with a
+  concurrent `GET /api/v1.0/subjects`, and the seeder would have to
+  handle re-deploys that wipe the seed list out of band.
 - **Separate `npm run seed` step**: rejected — the user has to know
   to run it; it is easy to forget; it produces an empty DB on
   fresh-checkout without warning.
-- **Manual SQL file checked into `docker/mysql/init/`**: rejected —
-  the assignment says "Repeatable" / "single command" / `docker
-  compose up` should bring the schema up. A manual file outside the
-  typeORM migration set would drift from the entity definitions.
+- **Manual SQL file checked into `docker/mysql/init/` and run by
+  MySQL on container start**: rejected — the user prepares MySQL
+  manually in Stage 1; the application does not own the boot-time
+  SQL.
+- **Keep the typeORM migration set as the source of truth**: rejected
+  — superseded by FR-016. The schema and seed data are under user
+  control, not under application control.
 
 ---
 
@@ -231,10 +246,10 @@ the last word (so direct writes that bypass the API are still rejected).
 |---|---|---|---|
 | Teacher email unique | `UNIQUE(teachers.email)` | `findTeacherByEmail` pre-INSERT check (for 404 vs 409 distinction) | `001-teachers` |
 | Class name globally unique | `UNIQUE(classes.name)` | None (the 409 message is sufficient) | `002-classes` |
-| Form teacher email unique | `UNIQUE(classes.form_teacher_email)` | `findClassByFormTeacherEmail` pre-INSERT check | `002-classes` |
-| Form teacher email refers to existing teacher | `FK(classes.form_teacher_email → teachers.email)` | `findTeacherByEmail` pre-INSERT check | `002-classes` |
-| Teacher subject refers to active subject | `FK(teachers.subject → subjects.name)` | `buildCreateTeacherSchema()` Joi `valid(...activeSubjectNames)` | `001-teachers` |
-| Class level refers to active level | `FK(classes.level → levels.name)` | `buildCreateClassSchema()` Joi `valid(...activeLevelNames)` | `002-classes` |
+| Form teacher unique (one form teacher per teacher) | `UNIQUE(classes.form_teacher_id)` | `findTeacherByEmail` pre-INSERT check resolves `teacherEmail` → `form_teacher_id` (for 404 vs 409 distinction) | `002-classes` |
+| Form teacher refers to existing teacher | `FK(classes.form_teacher_id → teachers.id)` | `findTeacherByEmail` pre-INSERT check (returns the `teachers.id` used as the FK value) | `002-classes` |
+| Teacher subject refers to active subject | `FK(teachers.subject_id → subjects.id)` | `buildCreateTeacherSchema()` Joi `valid(...activeSubjectNames)` resolves `subject` → `subject_id` via `findSubjectByName` | `001-teachers` |
+| Class level refers to active level | `FK(classes.level_id → levels.id)` | `buildCreateClassSchema()` Joi `valid(...activeLevelNames)` resolves `level` → `level_id` via `findLevelByName` | `002-classes` |
 | Subject / level referenced by live data cannot be removed or deactivated | Implicit in FK + `ON DELETE RESTRICT`; `active = true` is enforced by the application's "always read `WHERE active = true`" rule (deactivation is out of Stage 1 scope per FR-009b) | n/a | 003 |
 
 **Rationale**:
@@ -283,10 +298,10 @@ into a clean status code; it is **not** the primary defence.
 
 | Race | DB-level defence | Application-level secondary defence |
 |---|---|---|
-| Two concurrent `POST /api/teachers` with the same email | `UNIQUE(teachers.email)` → `QueryFailedError` code `ER_DUP_ENTRY` (1062) on the second `INSERT` | none — the route handler maps the typeORM error to `409 "Email already in use"` |
-| Two concurrent `POST /api/classes` with the same `name` | `UNIQUE(classes.name)` → `ER_DUP_ENTRY` on the second `INSERT` | none |
-| 10 concurrent `POST /api/classes` with the same `teacherEmail` (SC-007) | `UNIQUE(classes.form_teacher_email)` → 9 of 10 fail with `ER_DUP_ENTRY` | the pre-INSERT `findTeacherByEmail` only catches the existence-vs-duplicate distinction for the *first* request; the other 9 race past it and hit the DB constraint |
-| Two concurrent `POST /api/classes` where the first deletes the referenced teacher before the second runs | `FK(classes.form_teacher_email → teachers.email)` → `QueryFailedError` code `ER_NO_REFERENCED_ROW_2` (1452) on the second `INSERT` | the pre-INSERT `findTeacherByEmail` catches the common case; the FK catches the race window |
+| Two concurrent `POST /api/v1.0/teachers` with the same email | `UNIQUE(teachers.email)` → `QueryFailedError` code `ER_DUP_ENTRY` (1062) on the second `INSERT` | none — the route handler maps the typeORM error to `409 "Email already in use"` |
+| Two concurrent `POST /api/v1.0/classes` with the same `name` | `UNIQUE(classes.name)` → `ER_DUP_ENTRY` on the second `INSERT` | none |
+| 10 concurrent `POST /api/v1.0/classes` with the same `teacherEmail` (SC-007) | `UNIQUE(classes.form_teacher_id)` → 9 of 10 fail with `ER_DUP_ENTRY` (the route handler resolves `teacherEmail` → `form_teacher_id` so all 10 race past the pre-INSERT check and hit the DB constraint) | the pre-INSERT `findTeacherByEmail` only catches the existence-vs-duplicate distinction for the *first* request; the other 9 race past it and hit the DB constraint |
+| Two concurrent `POST /api/v1.0/classes` where the first deletes the referenced teacher before the second runs | `FK(classes.form_teacher_id → teachers.id)` → `QueryFailedError` code `ER_NO_REFERENCED_ROW_2` (1452) on the second `INSERT` | the pre-INSERT `findTeacherByEmail` catches the common case; the FK catches the race window |
 
 **Rationale**:
 - The 003 spec SC-007 is explicit: "Under a load of 10 concurrent
@@ -334,22 +349,26 @@ into a clean status code; it is **not** the primary defence.
    isolation (no real DB; uses the test `DataSource` against a
    per-process SQLite or in-memory MySQL fixture).
    - `tests/contract/teachers.api.spec.ts` — `POST` + `GET
-     /api/teachers`, all four status codes.
-   - `tests/contract/classes.api.spec.ts` — `POST` + `GET /api/classes`,
-     including the 404 (teacher-not-found) and 409 (teacher-already-
-     assigned, duplicate-name) paths.
-   - `tests/contract/subjects.api.spec.ts` — `GET /api/subjects`.
-   - `tests/contract/levels.api.spec.ts` — `GET /api/levels`.
+     /api/v1.0/teachers`, all four status codes.
+   - `tests/contract/classes.api.spec.ts` — `POST` + `GET
+     /api/v1.0/classes`, including the 404 (teacher-not-found) and
+     409 (teacher-already-assigned, duplicate-name) paths.
+   - `tests/contract/subjects.api.spec.ts` — `GET /api/v1.0/subjects`.
+   - `tests/contract/levels.api.spec.ts` — `GET /api/v1.0/levels`.
+   - `tests/contract/cross-cutting.api.spec.ts` — probes every status
+     code in the cross-cutting table across all four endpoints
+     under the `/api/v1.0/` prefix.
 
-3. **Integration (`tests/integration/`)** — real MySQL container, real
-   typeORM migrations, end-to-end. Runs the SC-007 race test (10
-   concurrent POSTs with the same form teacher).
+3. **Integration (`tests/integration/`)** — real MySQL container,
+   end-to-end. Runs the SC-007 race test (10 concurrent POSTs with
+   the same form teacher) against the user-prepared schema.
    - `tests/integration/cross-cutting.spec.ts` — restart the app
      container mid-test, verify SC-001 (data survives restart); run
-     the 10-concurrent-POST race, verify SC-007.
-   - `tests/integration/migration.spec.ts` — `docker compose down -v`
-     → `up` → schema is rebuilt from the migrations alone, no
-     manual SQL (verifies FR-016, SC-006).
+     the 10-concurrent-POST race, verify SC-007; assert every
+     response body carries `ulid` (per FR-021); assert every
+     endpoint lives under `/api/v1.0/` (per FR-022).
+   - (No `migration.spec.ts` — Stage 1 has no migration set; the
+     schema is user-prepared per FR-016, Session 2026-06-21.)
 
 **Rationale**:
 - The Constitution's Principle III (Unit Tests Required) says every
@@ -376,17 +395,24 @@ into a clean status code; it is **not** the primary defence.
 
 ## 3.8. Cross-cutting dependency on `001-teachers` and `002-classes`
 
-**Decision**: The 003 feature has zero new dependencies; it consumes
-the same `next`, `typeorm`, `mysql2`, `joi`, `vitest`, and `dotenv`
-versions that 001 already pinned.
+**Decision**: The 003 feature has **one new runtime dependency** added
+by the 2026-06-20 ULID clarification: the
+[`ulid`](https://www.npmjs.com/package/ulid) npm package (see
+§3.11). Otherwise, 003 consumes the same `next`, `typeorm`, `mysql2`,
+`joi`, `vitest`, and `dotenv` versions that 001 already pinned.
 
 **Rationale**:
-- The 003 deliverables are pure-function helpers (`lib/api/*.ts`),
-  migration code (in `lib/db/migrations/`), and tests. None of those
-  introduce a new third-party library.
+- The 003 deliverables are pure-function helpers (`lib/api/*.ts`)
+  and tests. None of those introduce a new third-party library
+  *except* the `ulid` package added by the 2026-06-20 clarification
+  (see §3.11) — every other cross-cutting helper is satisfied by
+  the already-installed stack. The legacy `lib/db/migrations/`
+  directory is removed from Stage 1 (per FR-016,
+  Session 2026-06-21); 003 no longer ships migration code.
 - Constitution Principle V (Simplicity): "no dependencies added
-  because we might need it". The 003 plan is satisfied by the
-  already-installed stack.
+  because we might need it". The `ulid` package is the single
+  exception: it is required by FR-021 to generate the per-row
+  frontend-stable handle that the cross-cutting contract exposes.
 
 **Alternatives considered**:
 - **`zod` instead of `joi`**: rejected — the 001 plan pinned Joi and
@@ -408,12 +434,12 @@ new container, no new volume, no new network.
 
 **Rationale**:
 - 003 adds zero new processes. The cross-cutting helpers run inside
-  the existing Next.js app container; the migration set runs inside
-  the existing MySQL container; the tests run inside the existing
-  `docker-compose.test.yml` setup.
-- The `docker compose up` flow already runs all migrations in
-  timestamp order; adding the 002 migrations to the same flow is a
-  no-op.
+  the existing Next.js app container; the tests run inside the
+  existing `docker-compose.test.yml` setup.
+- The `docker compose up` flow runs only the app container in Stage
+  1; there is no migration step on the boot sequence (per FR-016,
+  Session 2026-06-21). The user-prepared MySQL container is the
+  schema source of truth.
 
 **Alternatives considered**: none — there is no design choice to
 make here. 003 is a logic-layer change, not an infrastructure change.
@@ -425,7 +451,9 @@ make here. 003 is a logic-layer change, not an infrastructure change.
 **Decision**: The runtime configuration loader (`lib/config.ts`,
 inherited from `001-teachers`) is unchanged. The `DB_HOST=mysql` (the
 docker-network alias for the MySQL service) is the only configuration
-the new migrations touch.
+the new cross-cutting helpers touch. The legacy migration runner
+configuration (the `migrations` block on the typeORM `DataSource`)
+is removed in Stage 1 (per FR-016, Session 2026-06-21).
 
 **Rationale**:
 - The 003 feature does not introduce new env vars, new secrets, or
@@ -435,3 +463,120 @@ the new migrations touch.
   repo-level `.env` (JSON, model config only) is unrelated.
 
 **Alternatives considered**: none.
+
+---
+
+## 3.11. ULID column (FR-021) — cross-cutting row handle
+
+**Decision**: Every table (`subjects`, `teachers`, `levels`, `classes`)
+carries a `ulid CHAR(26) NOT NULL UNIQUE` column generated server-side
+by the [`ulid`](https://www.npmjs.com/package/ulid) npm package
+(`monotonicFactory()` is **not** required for Stage 1 — see below).
+The column is **exposed** in every Stage 1 GET and POST response
+(`POST /api/v1.0/teachers`, `GET /api/v1.0/teachers`,
+`POST /api/v1.0/classes`, `GET /api/v1.0/classes`,
+`GET /api/v1.0/subjects`, `GET /api/v1.0/levels`) but is
+**not** a foreign-key target — every FK continues to reference the
+surrogate `id` (per FR-019). The `ulid` column carries a `UNIQUE`
+index per table (`uq_teachers_ulid`, `uq_subjects_ulid`,
+`uq_classes_ulid`, `uq_levels_ulid`). A thin `lib/ulid.ts` wrapper
+exports `generateUlid()` that returns the result of `ulid()`; the
+001 and 002 entities call it once on insert. The 003 feature owns
+the wrapper; the 001 and 002 entities own the column declaration on
+their respective tables.
+
+**Rationale**:
+- The 2026-06-20 clarification (Spec Session 2026-06-20 (ULID
+  column), FR-021) introduced the column as a **frontend-stable row
+  handle**. The Stage 1 POST/GET responses carry natural-key fields
+  (`email`, `name`) which are editable; the `ulid` is a stable opaque
+  handle the frontend can cache against the row, so a future
+  edit/update endpoint can route by `ulid` without a schema migration
+  and without leaking the surrogate `id`.
+- The `ulid` package is the canonical implementation: 128-bit
+  randomness, 26-character Crockford Base32 encoding, time-ordered
+  lexicographically, 80 bits of entropy (collision probability
+  ~10⁻¹⁵ at the Stage 1 upper bound of ≤ 500 rows per table).
+  It is dependency-free, ~1 kB minified, and has TypeScript types
+  shipped in-box (`@types/ulid` is not required).
+- `ulid()` (not `monotonicFactory()`) is sufficient for Stage 1: the
+  insertion rate is human-driven (the administrator clicks "Save"
+  on the form), so the same-millisecond collision case the
+  monotonic variant defends against is not a real risk at ≤ 500 rows.
+  The wrapper exposes `generateUlid({ monotonic: true })` for a
+  future stage that ingests bulk imports — the swap is one line.
+- The `UNIQUE` index per table (one of `uq_*_ulid`) is added at the
+  same time as the column (in the same migration that creates the
+  table); a duplicate `ulid` collides the way a duplicate `email`
+  does, and the route handler maps the `ER_DUP_ENTRY` to `409`.
+- `ulid` is **not** a foreign-key target. FKs continue to reference
+  the surrogate `id` (per FR-019). This keeps the FK machinery
+  (BIGINT, fast joins, typeORM `@ManyToOne`) untouched and avoids the
+  TypeORM-CHAR-FK pitfalls some adapters have.
+
+**Wrapper sketch** (final code lives in `lib/ulid.ts`):
+
+```ts
+// lib/ulid.ts
+import { ulid as ulidImpl } from "ulid";
+
+export function generateUlid(opts?: { monotonic?: boolean }): string {
+  // Stage 1: plain ulid() is enough. The monotonic flag is reserved
+  // for a future bulk-import stage that may insert many rows in the
+  // same millisecond.
+  return ulidImpl();
+}
+```
+
+**Entity annotation sketch** (the final code lives in each
+`lib/db/entities/*.ts`):
+
+```ts
+// on Teacher, Subject, Class, Level
+@Column({ type: "char", length: 26, unique: true })
+ulid!: string;
+```
+
+The route handler populates `entity.ulid = generateUlid()` immediately
+before `repository.save(entity)`. The `toJSON()` mapping includes
+`ulid` so it lands in every response shape (POST 201 body, GET 200
+list entries).
+
+**Alternatives considered**:
+- **UUID v4** (the `uuid` npm package): rejected — UUIDs are 36
+  characters (including 4 hyphens) and are not lexicographically
+  time-ordered; the frontend cannot sort by creation time without
+  decoding. ULID is 26 chars, time-ordered, and the same length as
+  a UUID without the hyphens.
+- **`monotonicFactory()` everywhere**: rejected for Stage 1 — adds
+  shared state to the `lib/ulid.ts` wrapper (the factory is a
+  closure over an internal counter) for a benefit that only
+  matters at insertion rates much higher than the spec contemplates.
+  Reserved behind an explicit `monotonic: true` opt-in.
+- **Application-side ULID generation in the route handler rather
+  than the entity `@BeforeInsert()` hook**: rejected — the entity
+  hook is closer to the persistence boundary and keeps the
+  cross-cutting concern out of the route handlers, matching the
+  audit-columns pattern (`@CreateDateColumn`,
+  `@UpdateDateColumn`) already in use.
+- **Store `ulid` as `BINARY(16)` to save 10 bytes per row**: rejected
+  — the column is exposed in API responses (FR-021), so the wire
+  format has to be the 26-character string. Storing as binary and
+  converting on read adds complexity for ~10 bytes/row; not worth it.
+- **Use the surrogate `id` as the frontend-stable handle instead of
+  adding `ulid`**: rejected — `id` is a BIGINT that may be reused
+  across environments (no global uniqueness guarantee), and exposing
+  it ties the frontend to the DB implementation. ULID is portable,
+  opaque, and globally unique.
+
+**`ulid` UNIQUE index names**:
+
+| Table | Index name |
+|---|---|
+| `teachers` | `uq_teachers_ulid` |
+| `subjects` | `uq_subjects_ulid` |
+| `classes` | `uq_classes_ulid` |
+| `levels` | `uq_levels_ulid` |
+
+Added in the same migration that creates each table (per FR-021;
+cross-cutting column rule).

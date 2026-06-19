@@ -15,27 +15,47 @@ Classes features depend on. This feature owns:
    route-handler wrapper that enforces all three.
 2. **The cross-cutting data-integrity rules** at the data layer —
    `UNIQUE(teachers.email)`, `UNIQUE(classes.name)`,
-   `UNIQUE(classes.form_teacher_email)`, the cross-feature
-   `FOREIGN KEY(classes.form_teacher_email → teachers.email)`,
-   the `FOREIGN KEY(teachers.subject → subjects.name)`, and the
-   `FOREIGN KEY(classes.level → levels.name)`. Each rule is
+   `UNIQUE(classes.form_teacher_id)`, the cross-feature
+   `FOREIGN KEY(classes.form_teacher_id → teachers.id)`,
+   the `FOREIGN KEY(teachers.subject_id → subjects.id)`, and the
+   `FOREIGN KEY(classes.level_id → levels.id)`. Each rule is
    enforced by the DB so even direct writes that bypass the API
-   cannot violate it.
-3. **The migration-set ordering discipline** — the four typeORM
-   migrations (`InitSchema`, `SeedSubjects`, `InitClasses`,
-   `SeedLevels`) run in timestamp order on `docker compose up` and
-   are idempotent on re-run (per FR-016, FR-017).
+   cannot violate it. The 2026-06-19 audit-columns clarification
+   added a uniform six-column audit pattern (`id` surrogate PK,
+   `created_at`, `created_by`, `modified_at`, `modified_by`,
+   `version`) to every table — see `spec.md` Session 2026-06-19
+   (audit columns) and `data-model.md` §2.6–§2.7. The
+   2026-06-20 ULID clarification added a seventh cross-cutting
+   column (`ulid CHAR(26) NOT NULL UNIQUE`) to every table,
+   exposed in every Stage 1 GET and POST response as the
+   frontend-stable row handle (see `spec.md` Session 2026-06-20
+   (ULID column), FR-021, and `data-model.md` §2.8).
+3. **No migrations in Stage 1** — the MySQL schema, audit columns,
+   ULID column, FK constraints, `UNIQUE` indexes, and the
+   `subjects` / `levels` reference-list seed data are all created
+   by the user against the user-prepared MySQL container (per
+   FR-016 and the Session 2026-06-21 operational-rules clarification).
+   The `docker compose up` boot sequence MUST NOT run any
+   `typeorm-ts-node-commonjs migration:run` step. The
+   `lib/db/migrations/` directory is out of Stage 1 scope.
 4. **The reference-list seed pattern** — `subjects` and `levels` are
-   populated by separate seed migrations (`INSERT IGNORE`), not by a
-   boot-time seeder, an `npm run seed` step, or a manual SQL file.
+   populated by the user's own SQL against the user-prepared MySQL
+   container, not by a boot-time seeder, an `npm run seed` step, or
+   a typeORM migration.
 
 The plan inherits the stack, container layout, and the per-entity
 typeORM / Joi code from
 [`001-teachers`](./../001-teachers/plan.md) and
-[`002-classes`](./../002-classes/plan.md). 003 adds **zero new
-dependencies**, **zero new endpoints**, and **zero new tables**. Its
-deliverables are the cross-cutting helpers, the migration-order
-verification, and the OpenAPI contract files in `./contracts/`.
+[`002-classes`](./../002-classes/plan.md). 003 adds **one new
+runtime dependency** (the [`ulid`](https://www.npmjs.com/package/ulid)
+npm package, used to generate the new `ulid` column on every row
+— see [research.md §3.11](./research.md#311-ulid-column-fr-021)),
+**zero new endpoints**, and **zero new tables**. Its deliverables
+are the cross-cutting helpers, the ULID generation helper, and the
+OpenAPI contract files in `./contracts/`. Stage 1 endpoints are
+all exposed under the version prefix `/api/v1.0/` (per FR-022,
+owned by `003-backend-api-db`; see
+[research.md §3.12](./research.md#312-api-version-prefix-fr-022)).
 
 ## Technical Context
 
@@ -47,38 +67,42 @@ existing `app/api/` route handlers (as the `withApiContract` wrapper)
 and inside `lib/api/` (the error-envelope and DB-error helpers).
 
 **Primary Dependencies**: same as `001-teachers` and `002-classes` (see
-[research.md §3.8](./research.md#38-cross-cutting-dependency-on-001-teachers-and-002-classes)).
-No new dependencies. The full set — including the `antd`, `tailwindcss`,
-`postcss`, and `autoprefixer` packages added by `001-teachers/T001` per the
-constitution v2.3.0 amendment (SGDS v3 → Ant Design + Tailwind CSS) — is
-enumerated in
+[research.md §3.8](./research.md#38-cross-cutting-dependency-on-001-teachers-and-002-classes)),
+plus **one new runtime dependency**: the
+[`ulid`](https://www.npmjs.com/package/ulid) npm package — used by
+the 001 and 002 entities to generate the new `ulid` column on every
+insert (per FR-021 — Session 2026-06-20 ULID clarification; see
+[research.md §3.11](./research.md#311-ulid-column-fr-021)). The full
+set — including the `antd`, `tailwindcss`, `postcss`, and
+`autoprefixer` packages added by `001-teachers/T001` per the
+constitution v2.3.0 amendment (SGDS v3 → Ant Design + Tailwind CSS)
+— is enumerated in
 [`001-teachers/plan.md` Primary Dependencies](../001-teachers/plan.md#technical-context).
-003 inherits them transitively; it adds zero of its own.
+The `ulid` package is the only addition the 003 feature owns.
 
 **Storage**: same MySQL 8 container as `001-teachers`. The 003 feature
-adds **no new tables**; it owns the *cross-cutting* constraints and
-the *migration-set ordering*. Per [data-model.md §4](./data-model.md#4-the-full-migration-set),
-the four typeORM migrations run in this order:
-
-| # | File | Owner |
-|---|---|---|
-| 1 | `InitSchema.ts` (creates `subjects`, `teachers`) | 001-teachers |
-| 2 | `SeedSubjects.ts` (seeds 9 subjects) | 001-teachers |
-| 3 | `InitClasses.ts` (creates `levels`, `classes`) | 002-classes |
-| 4 | `SeedLevels.ts` (seeds 10 levels) | 002-classes |
+adds **no new tables**; it owns the *cross-cutting* constraints. The
+MySQL schema, audit columns, ULID column, FK constraints, UNIQUE
+indexes, and the `subjects` / `levels` reference-list seed data are
+all created by the user against the user-prepared MySQL container
+(per FR-016, Session 2026-06-21). There is **no migration set** in
+Stage 1; the previous migration inventory in
+[legacy-data-model.md §4](./data-model.md#4-the-full-migration-set)
+is preserved for the migration history but the migrations themselves
+are removed from the project source.
 
 **Testing**: Vitest (inherited from `001-teachers`). Three tiers per
 [research.md §3.7](./research.md#37-test-strategy--three-tiers):
 1. **Unit (`tests/unit/`)** — pure-function helpers. No DB, no
    network. New: `api-error.spec.ts`, `route-wrapper.spec.ts`,
-   `db-error.spec.ts`.
+   `db-error.spec.ts`, `ulid.spec.ts`.
 2. **Contract (`tests/contract/`)** — exercise the Next.js server
    in isolation. New: `cross-cutting.api.spec.ts` (probes every
-   status code in the cross-cutting table across all four endpoints).
+   status code in the cross-cutting table across all four endpoints
+   under the `/api/v1.0/` prefix).
 3. **Integration (`tests/integration/`)** — real MySQL container.
    New: `cross-cutting.spec.ts` (SC-007 race test, 10 concurrent
-   POSTs), `migration.spec.ts` (FR-016 / SC-006 schema rebuild from
-   scratch).
+   POSTs).
 
 **Target Platform**: same as `001-teachers` — Docker Desktop, Linux /
 macOS / Windows host, Docker Compose v2.
@@ -100,12 +124,17 @@ negligible.
 - The cross-cutting contract is **non-negotiable**: every route
   handler goes through `withApiContract`; every error response uses
   `{ "error": "..." }`; every status code is in the cross-cutting
-  table.
-- The migration set is **ordered** and **idempotent**. Re-running the
-  set on a populated MySQL is a no-op.
+  table; every endpoint uses the `/api/v1.0/` version prefix (per
+  FR-022).
+- There are **no migrations** in Stage 1 (per FR-016,
+  Session 2026-06-21). The `docker compose up` boot sequence MUST
+  NOT run a migration step. The MySQL schema is user-prepared.
 - The four data-integrity rules (FR-006, FR-007, FR-008, FR-009,
   FR-009a) are enforced at the **DB layer** so direct writes that
   bypass the API are still rejected.
+- The teacher `contactNumber` Joi pattern is `^\d{8}$` (exactly 8
+  digits, no leading-digit restriction — per FR-004 in
+  `001-teachers/spec.md`, Session 2026-06-21).
 - ≤ 500 teachers, ≤ 500 classes (inherited Stage 1 upper bounds);
   no pagination.
 
@@ -113,7 +142,7 @@ negligible.
 - 1 application process (Next.js, same as `001-teachers`) + 1
   database process (MySQL, same as `001-teachers`).
 - 4 DB tables total (same as after `001` + `002`): `subjects`,
-  `teachers`, `levels`, `classes`.
+  `teachers`, `levels`, `classes`. All four are user-prepared.
 - 0 new API endpoints (the four endpoints are owned by `001` and
   `002`; 003 owns the *contract* they conform to).
 - 0 new client-rendered pages.
@@ -121,9 +150,11 @@ negligible.
   for the envelope helpers, `db-error.ts` for the typeORM error
   mapping — the `response.ts` and `content-type.ts` modules already
   exist from `001`; 003 refines them and adds `db-error.ts`).
-- 4 typeORM migrations total (1 from `001`, 1 from `001` seed, 1
-  from `002`, 1 from `002` seed); 003 adds **0** migrations but
-  owns the *ordering* and the *idempotency contract*.
+- 1 new `lib/ulid.ts` helper (`generateUlid()` thin wrapper around
+  the `ulid` npm package, used by the 001 + 002 entities on insert
+  per FR-021 — see [research.md §3.11](./research.md#311-ulid-column-fr-021)).
+- 0 typeORM migrations (Stage 1 has no migration set; the
+  user-prepared MySQL replaces the migration runner per FR-016).
 
 ## Constitution Check
 
@@ -147,6 +178,7 @@ negligible.
 **Constitution TODO items status**:
 - All `TODO(FEATURE_001)` items were resolved in the `001-teachers` plan (Vitest, docker-compose, `TODO(ANTD_TAILWIND_VERSION)` replacing the prior `TODO(SGDS_V3_PACKAGE)` per the constitution v2.3.0 amendment, Joi-alignment, functional-review). No new TODO items are introduced by this plan.
 - New item introduced by this plan: `TODO(FEATURE_003)` — formalise the contract test suite (every status code in the cross-cutting table is exercised by an automated contract test). Tracked in `tasks.md`.
+- New item introduced by the 2026-06-20 ULID clarification: `TODO(FEATURE_003_ULID)` — add the `ulid` npm package to `package.json` and ship the `lib/ulid.ts` generator wrapper; verify on `npm install` that the new dep resolves and the entity insert paths produce a 26-character Crockford Base32 string per row (per FR-021). Tracked in `tasks.md`.
 
 No violations. No entries required in **Complexity Tracking**.
 
@@ -162,10 +194,10 @@ specs/003-backend-api-db/
 ├── quickstart.md        # Phase 1 output (/speckit-plan command)
 ├── contracts/           # Phase 1 output (/speckit-plan command) — owns the unified API contract
 │   ├── common.yaml      # the cross-cutting error envelope + status-code responses (single source of truth)
-│   ├── teachers.yaml    # POST/GET /api/teachers
-│   ├── classes.yaml     # POST/GET /api/classes
-│   ├── subjects.yaml    # GET /api/subjects
-│   └── levels.yaml      # GET /api/levels
+│   ├── teachers.yaml    # POST/GET /api/v1.0/teachers
+│   ├── classes.yaml     # POST/GET /api/v1.0/classes
+│   ├── subjects.yaml    # GET /api/v1.0/subjects
+│   └── levels.yaml      # GET /api/v1.0/levels
 └── spec.md              # pre-existing
 ```
 
@@ -186,12 +218,12 @@ lib/
 ├── api/                                                      # (003 refines; some files pre-existing from 001)
 │   ├── response.ts                                           # (pre-existing) errorEnvelope(), jsonError(), jsonOk(), jsonCreated()
 │   ├── content-type.ts                                       # (pre-existing) requireJson()
-│   ├── route.ts                                              # (+) withApiContract(handler) — the cross-cutting wrapper
+│   ├── route.ts                                              # (+) withApiContract(handler) — the cross-cutting wrapper; enforces the `/api/v1.0/` prefix and the Stage 1 status-code table
 │   └── db-error.ts                                           # (+) typeORM QueryFailedError → status + message mapping
+├── ulid.ts                                                   # (+) generateUlid() — thin wrapper over the `ulid` npm package (per FR-021)
 ├── db/
-│   ├── data-source.ts                                        # (pre-existing)
-│   ├── entities/                                             # (pre-existing)
-│   └── migrations/                                           # (4 migrations, all pre-existing from 001 + 002; 003 owns the order)
+│   ├── data-source.ts                                        # (pre-existing; no `migrations` runner — the schema is user-prepared per FR-016)
+│   └── entities/                                             # (pre-existing; +ulid column on each entity per FR-021)
 └── config.ts                                                 # (pre-existing)
 
 tests/
@@ -199,14 +231,14 @@ tests/
 │   ├── (pre-existing from 001-teachers and 002-classes)
 │   ├── api-error.spec.ts                                     # (+) every status code in the cross-cutting table
 │   ├── route-wrapper.spec.ts                                 # (+) withApiContract — 415, 500, happy-path passthrough
-│   └── db-error.spec.ts                                      # (+) every typeORM error code in the mapping
+│   ├── db-error.spec.ts                                      # (+) every typeORM error code in the mapping
+│   └── ulid.spec.ts                                          # (+) generateUlid() — 26-char Crockford Base32, monotonicity toggleable, no collision over 10k calls
 ├── contract/
 │   ├── (pre-existing from 001-teachers and 002-classes)
-│   └── cross-cutting.api.spec.ts                             # (+) probes every status code across all four endpoints
+│   └── cross-cutting.api.spec.ts                             # (+) probes every status code across all four endpoints (includes `ulid` in every response shape)
 └── integration/
     ├── (pre-existing from 001-teachers and 002-classes)
-    ├── cross-cutting.spec.ts                                 # (+) SC-007 race test (10 concurrent POSTs)
-    └── migration.spec.ts                                     # (+) SC-006 schema rebuild from migrations alone
+    └── cross-cutting.spec.ts                                 # (+) SC-007 race test (10 concurrent POSTs); asserts every response body carries `ulid`; asserts every endpoint lives under `/api/v1.0/`
 
 docker/                                                       # (pre-existing from 001-teachers)
 ├── Dockerfile

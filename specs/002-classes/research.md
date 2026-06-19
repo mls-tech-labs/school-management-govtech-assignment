@@ -19,9 +19,12 @@ cross-references the inherited ones.
 **Decision**: Reuse the 001-teachers stack as-is — same Next.js 15, same
 typeORM 0.3, same MySQL 8, same Joi 17, same **Ant Design (`antd`)** +
 **Tailwind CSS** (constitution v2.3.0 amendment supersedes the prior SGDS v3
-choice), same Vitest, same docker-compose layout. No new npm dependencies
-for this feature (the `antd` / `tailwindcss` / `postcss` / `autoprefixer`
-packages are added by 001-teachers/T001 and inherited).
+choice), same Vitest, same docker-compose layout, plus the **`ulid` npm
+package** inherited from `003-backend-api-db` for the cross-cutting
+`ulid` row-handle column (per FR-021 — Session 2026-06-20 ULID
+clarification). No other new npm dependencies for this feature (the
+`antd` / `tailwindcss` / `postcss` / `autoprefixer` packages are added
+by 001-teachers/T001 and inherited).
 
 **Rationale**:
 - The Constitution's Principle V (Simplicity) says "no dependencies added
@@ -57,12 +60,16 @@ inherited here without re-deriving):
 
 ---
 
-## 2.2. Form-teacher lookup in `POST /api/classes`
+## 2.2. Form-teacher lookup in `POST /api/v1.0/classes`
 
-**Decision**: Two-step lookup: **first** `SELECT 1 FROM teachers WHERE email = ?`
-to detect the `404 "Teacher not found"` case; **then** `INSERT INTO classes
-(...)` and let the `UNIQUE` index on `classes.form_teacher_email` catch the
-`409 "Teacher already assigned"` case race-safely.
+**Decision**: Two-step lookup: **first** `SELECT id FROM teachers WHERE email = ?`
+to detect the `404 "Teacher not found"` case AND to obtain the teacher's `id`
+to use as `form_teacher_id`; **then** `INSERT INTO classes (..., form_teacher_id, ...)`
+and let the `UNIQUE` index on `classes.form_teacher_id` catch the
+`409 "Teacher already assigned"` case race-safely. The wire-format
+`teacherEmail` is resolved to the `form_teacher_id` FK column at the route
+handler (per `003-backend-api-db/spec.md` FR-019 — Session 2026-06-19
+audit-columns clarification).
 
 **Rationale**:
 - The pre-INSERT `SELECT` is the *only* way to distinguish `404 "Teacher not
@@ -73,7 +80,7 @@ to detect the `404 "Teacher not found"` case; **then** `INSERT INTO classes
 - Without the pre-INSERT check, the route handler would have to inspect the
   typeORM `QueryFailedError` and decide between `404` and `409` from the
   raw error code — possible but error-prone and harder to test.
-- The `UNIQUE` index on `classes.form_teacher_email` (the second defence
+- The `UNIQUE` index on `classes.form_teacher_id` (the second defence
   line) is still required: two simultaneous submissions with the same form
   teacher can both pass the pre-INSERT check; the second one then fails the
   `INSERT` with a `UNIQUE` violation, and the route handler translates that
@@ -87,7 +94,7 @@ to detect the `404 "Teacher not found"` case; **then** `INSERT INTO classes
 **Route-handler sketch**:
 
 ```ts
-// app/api/classes/route.ts (sketch, not the final code)
+// app/api/v1.0/classes/route.ts (sketch, not the final code — under the /api/v1.0/ version prefix per FR-022, Session 2026-06-21)
 const schema = await buildCreateClassSchema();
 const { value, error } = schema.validate(req.body);
 if (error) return jsonError(400, error.message);
@@ -102,6 +109,7 @@ try {
   if (isUniqueViolation(e, "uq_classes_name"))         return jsonError(409, "Class name already in use");
   if (isUniqueViolation(e, "uq_classes_form_teacher"))  return jsonError(409, "Teacher already assigned");
   if (isFkViolation(e, "fk_classes_form_teacher"))     return jsonError(404, "Teacher not found");
+  // fk_classes_form_teacher: classes.form_teacher_id → teachers.id
   throw e; // → 500
 }
 ```
@@ -117,10 +125,13 @@ try {
 
 ---
 
-## 2.3. `classes.form_teacher_email` — `FOREIGN KEY` vs application-level reference
+## 2.3. `classes.form_teacher_id` — `FOREIGN KEY` vs application-level reference
 
-**Decision**: **`FOREIGN KEY (form_teacher_email) REFERENCES teachers(email)`**
-at the DB level. Application-level reference is rejected.
+**Decision**: **`FOREIGN KEY (form_teacher_id) REFERENCES teachers(id)`**
+at the DB level. The route handler resolves the wire-format `teacherEmail`
+to `form_teacher_id` via `findTeacherByEmail` before insert (per
+`003-backend-api-db/spec.md` FR-019). Application-level reference is
+rejected.
 
 **Rationale**:
 - The Constitution's Principle V (Simplicity) and the
@@ -129,15 +140,17 @@ at the DB level. Application-level reference is rejected.
   testable way to enforce "a class's form teacher is always an existing
   teacher".
 - Without the FK, the application code would have to check
-  `SELECT 1 FROM teachers WHERE email = ?` on every class INSERT, plus
+  `SELECT 1 FROM teachers WHERE id = ?` on every class INSERT, plus
   every `SELECT` of a class (to handle the race where a teacher is
   deleted between INSERT and SELECT). The FK lets the DB do both.
 - The FK also lets MySQL enforce the constraint on direct writes that
   bypass the API — exactly the property the
   `003-backend-api-db` User Story 2 codifies.
-- The 001-teachers spec already requires `teachers.email` to be
-  `UNIQUE` (FR-005). A `FOREIGN KEY` to a `UNIQUE` column is a clean
-  MySQL pattern; no surrogate id is required for the teachers side.
+- The 001-teachers spec gives every table a surrogate `id` PK (per
+  FR-018 — Session 2026-06-19 audit-columns clarification). A
+  `FOREIGN KEY` from one surrogate `id` to another is the orthodox
+  pattern. `teachers.email` is still preserved as `UNIQUE NOT NULL` as
+  the natural-key identifier (per FR-020).
 
 **Caveat — deleting a teacher in a future stage**:
 - A future-stage delete-teacher endpoint would have to handle the
@@ -154,10 +167,11 @@ at the DB level. Application-level reference is rejected.
 - **Application-level reference only** (no FK): simpler schema, but loses
   the race-safety property, and the application has to carry the
   consistency check everywhere. Rejected.
-- **Surrogate `id` on `teachers` with `classes.form_teacher_id INT` FK**:
-  more orthodox, but the 001-teachers spec says `email` is the natural
-  identifier and that no internal surrogate id is exposed in the UI.
-  Adding a surrogate id would be a contradiction. Rejected.
+- **Natural-key FK to `teachers.email`** (the pre-audit pattern): would
+  not require the route handler to resolve `email` → `id` before insert,
+  but it conflicts with the audit-columns clarification (FR-019) which
+  requires the FK to reference `teachers.id`, and makes the FK column
+  semantics vulnerable to future email-change features. Rejected.
 
 ---
 
@@ -185,7 +199,7 @@ The `id` column **is not** in the Stage 1 API response.
 ```ts
 @Entity({ name: "classes" })
 @Index("uq_classes_name", ["name"], { unique: true })
-@Index("uq_classes_form_teacher", ["formTeacherEmail"], { unique: true })
+@Index("uq_classes_form_teacher", ["formTeacherId"], { unique: true })
 export class Class {
   @PrimaryGeneratedColumn({ type: "bigint" })
   id!: string; // typeORM returns BIGINT as string by default
@@ -196,11 +210,11 @@ export class Class {
   @Column({ type: "varchar", length: 255, unique: true })
   name!: string;
 
-  @Column({ name: "form_teacher_email", type: "varchar", length: 254 })
-  formTeacherEmail!: string;
+  @Column({ name: "form_teacher_id", type: "bigint", unsigned: true })
+  formTeacherId!: string;
 
   @ManyToOne(() => Teacher, { nullable: false })
-  @JoinColumn({ name: "form_teacher_email", referencedColumnName: "email" })
+  @JoinColumn({ name: "form_teacher_id", referencedColumnName: "id" })
   formTeacher?: Teacher;
 
   @ManyToOne(() => Level, { nullable: false })
@@ -221,54 +235,67 @@ export class Class {
 
 ---
 
-## 2.5. Migration strategy — separate 002 migration vs 001-owned migration
+## 2.5. Schema-preparation strategy — user-prepared MySQL (per FR-016, Session 2026-06-21)
 
-**Decision**: **Separate migrations, numbered to run after the 001
-migrations.** `1700000000002-InitClasses.ts` creates the `levels` and
-`classes` tables and the FK to `teachers.email`; `1700000000003-SeedLevels.ts`
-seeds the `levels` table.
+**Decision**: **No typeORM migration set in Stage 1.** The MySQL
+schema, audit columns, ULID column, FK constraints, UNIQUE indexes,
+and the `subjects` / `levels` reference-list seed data are all
+created by the user against the user-prepared MySQL container (per
+FR-016, Session 2026-06-21). The `lib/db/migrations/` directory is
+out of Stage 1 scope.
 
 **Rationale**:
-- typeORM migrations are versioned sequentially by the timestamp prefix;
-  the file name alone determines the run order. All migrations can live
-  in the same `lib/db/migrations/` folder regardless of which plan added
-  them.
-- Keeping the 001 and 002 migrations separate keeps each spec's plan
-  self-contained: the 001 plan owns the `teachers` and `subjects` schema;
-  the 002 plan owns the `classes` and `levels` schema. A future 003 plan
-  (whenever it runs) can verify the cross-cutting contract by inspecting
-  the migration set, not by re-deriving which file added which table.
-- The migrations are *idempotent on `up`* (use `IF NOT EXISTS` and
-  `INSERT IGNORE`); a re-run of the entire migration set is a no-op
-  (matches `003-backend-api-db` FR-016 and FR-017).
+- The 003 spec Clarifications, Session 2026-06-21 (Q2) collapsed
+  the schema-preparation rule into a single operational constraint:
+  the user prepares the MySQL container; the application is
+  read/write at runtime only; `docker compose up` MUST NOT run a
+  migration step.
+- The earlier Session 2026-06-18 design — `InitClasses` plus
+  `SeedLevels` migrations run in timestamp order on `docker compose
+  up`, idempotent on `up` via `IF NOT EXISTS` and `INSERT IGNORE` —
+  is removed from the project source. The legacy migration history
+  is preserved in [`data-model.md` §8](./data-model.md#8-migration-inventory-legacy--superseded-by-fr-016-session-2026-06-21)
+  for reference only.
+- The single-command `docker compose up` experience is preserved
+  even without the migration set: the user prepares MySQL once,
+  then `docker compose up` brings up only the app container, which
+  connects to the existing MySQL.
+- Constitution Principle V (Simplicity) is satisfied: no separate
+  `npm run seed`, no boot-time seeder, no migration runner on the
+  app container boot sequence.
 
-**Migration set (final, after both 001 and 002 plans run)**:
+**Previous migration set (legacy — removed in Stage 1)**:
 
 | Timestamp | File | Owner | Purpose |
 |---|---|---|---|
-| 1700000000000 | `InitSchema.ts` | 001-teachers | Creates `subjects` + `teachers` tables, `UNIQUE` on `teachers.email` |
+| 1700000000000 | `InitSchema.ts` | 001-teachers | Created `subjects` + `teachers` tables, `UNIQUE` on `teachers.email` |
 | 1700000000001 | `SeedSubjects.ts` | 001-teachers | `INSERT IGNORE` the subjects seed list |
-| 1700000000002 | `InitClasses.ts` | 002-classes | Creates `levels` + `classes` tables, FK `classes.form_teacher_email` → `teachers.email`, `UNIQUE` on `classes.name`, `UNIQUE` on `classes.form_teacher_email` |
+| 1700000000002 | `InitClasses.ts` | 002-classes | Created `levels` + `classes` tables, FK `classes.form_teacher_id` → `teachers.id`, `UNIQUE` on `classes.name`, `UNIQUE` on `classes.form_teacher_id` |
 | 1700000000003 | `SeedLevels.ts` | 002-classes | `INSERT IGNORE` the levels seed list |
 
 **Alternatives considered**:
-- **Single 001-owned migration that creates all 4 tables** — would have
-  made the 001 plan responsible for the `classes` and `levels` tables
-  that the 001 spec doesn't talk about. Rejected.
-- **No migrations / `synchronize: true` in typeORM** — explicitly
-  forbidden by the `003-backend-api-db` FR-016 ("repeatable, versioned
-  migration process"). Rejected.
+- **Single 001-owned migration that creates all 4 tables** —
+  rejected (the per-feature plan boundary is cleaner with
+  feature-owned migrations, but the migration set itself is out
+  of Stage 1 scope per FR-016).
+- **`synchronize: true` in typeORM** — explicitly forbidden by the
+  legacy `003-backend-api-db` FR-016 wording ("repeatable, versioned
+  migration process"). Even more strongly rejected now that FR-016
+  itself collapses to "no migrations in Stage 1".
+- **Re-introduce the migration set with a runtime flag** — rejected
+  because the user-prepared MySQL contract is the Stage 1
+  operational rule; the migration set is not in scope.
 
 ---
 
-## 2.6. `GET /api/classes` join strategy
+## 2.6. `GET /api/v1.0/classes` join strategy
 
 **Decision**: **One `JOIN` query** in the route handler:
 
 ```sql
 SELECT c.level, c.name, t.name AS form_teacher_name
 FROM classes c
-JOIN teachers t ON c.form_teacher_email = t.email
+JOIN teachers t ON c.form_teacher_id = t.id
 ORDER BY c.level, c.name;
 ```
 
@@ -280,7 +307,7 @@ ORDER BY c.level, c.name;
 - With ≤ 500 classes (Stage 1 upper bound) the N+1 would be ≤ 500
   round-trips; even on a fast LAN that's 50+ ms vs the JOIN's < 5 ms. The
   JOIN is the right tool.
-- The `JOIN` rides the existing `UNIQUE(teachers.email)` index, so it's
+- The `JOIN` rides the `PRIMARY KEY (teachers.id)` index, so it's
   O(M log N) for M classes and N teachers. Negligible at Stage 1 scale.
 - The typeORM query is expressed as `createQueryBuilder("c")
   .innerJoinAndSelect("c.formTeacher", "t")` or equivalently via the
