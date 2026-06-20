@@ -77,15 +77,15 @@ CREATE TABLE IF NOT EXISTS `subjects` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 INSERT IGNORE INTO `subjects` (`id`, `name`, `active`, `ulid`) VALUES
-  (1, 'English',            TRUE, '01H000000000000000000000A1'),
-  (2, 'Mathematics',        TRUE, '01H000000000000000000000A2'),
-  (3, 'Science',            TRUE, '01H000000000000000000000A3'),
-  (4, 'Chinese',            TRUE, '01H000000000000000000000A4'),
-  (5, 'Malay',              TRUE, '01H000000000000000000000A5'),
-  (6, 'Tamil',              TRUE, '01H000000000000000000000A6'),
-  (7, 'Art',                TRUE, '01H000000000000000000000A7'),
-  (8, 'Music',              TRUE, '01H000000000000000000000A8'),
-  (9, 'Physical Education', TRUE, '01H000000000000000000000A9');
+  (1, 'English Language',            TRUE, '01H000000000000000000000A1'),
+  (2, 'Mother Tongue Language',        TRUE, '01H000000000000000000000A2'),
+  (3, 'Mathematics',            TRUE, '01H000000000000000000000A3'),
+  (4, 'Science',            TRUE, '01H000000000000000000000A4'),
+  (5, 'Art',              TRUE, '01H000000000000000000000A5'),
+  (6, 'Music',              TRUE, '01H000000000000000000000A6'),
+  (7, 'Physical Education',                TRUE, '01H000000000000000000000A7'),
+  (8, 'Social Studies',              TRUE, '01H000000000000000000000A8'),
+  (9, 'Character and Citizenship Education', TRUE, '01H000000000000000000000A9');
 
 -- -----------------------------------------------------------------------------
 -- 2. teachers  (PK = id surrogate; FK subject_id → subjects.id ; UNIQUE email as natural key)
@@ -135,11 +135,7 @@ INSERT IGNORE INTO `levels` (`id`, `name`, `active`, `ulid`) VALUES
   (3,  'Primary 3',   TRUE, '01H000000000000000000000B3'),
   (4,  'Primary 4',   TRUE, '01H000000000000000000000B4'),
   (5,  'Primary 5',   TRUE, '01H000000000000000000000B5'),
-  (6,  'Primary 6',   TRUE, '01H000000000000000000000B6'),
-  (7,  'Secondary 1', TRUE, '01H000000000000000000000B7'),
-  (8,  'Secondary 2', TRUE, '01H000000000000000000000B8'),
-  (9,  'Secondary 3', TRUE, '01H000000000000000000000B9'),
-  (10, 'Secondary 4', TRUE, '01H000000000000000000000BA');
+  (6,  'Primary 6',   TRUE, '01H000000000000000000000B6');
 
 -- -----------------------------------------------------------------------------
 -- 4. classes  (PK = id surrogate; FKs to levels + teachers via id; UNIQUE name and form_teacher_id)
@@ -168,8 +164,31 @@ CREATE TABLE IF NOT EXISTS `classes` (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- -----------------------------------------------------------------------------
+-- 5. users  (reference list — seeded once; id is the surrogate PK, username is UNIQUE NOT NULL)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `users` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `username`        VARCHAR(64)     NOT NULL,
+  `password`      VARCHAR(255)         NOT NULL, 
+  `salt`      VARCHAR(255)         NOT NULL,
+  `active`      BOOLEAN         NOT NULL DEFAULT TRUE,
+  `created_at`  DATETIME(6)     NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `created_by`  VARCHAR(64)     NOT NULL DEFAULT 'system',
+  `modified_at` DATETIME(6)     NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `modified_by` VARCHAR(64)     NOT NULL DEFAULT 'system',
+  `version`     INT             NOT NULL DEFAULT 1,
+  `ulid`        CHAR(26)        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_users_username` (`username`),
+  UNIQUE KEY `uq_users_ulid` (`ulid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+INSERT IGNORE INTO `users` (`id`, `username`,`password`, `salt`, `active`, `ulid`) VALUES
+  (1,  'admin', 'password_hash','salt',  TRUE, '01H000000000000000000000C1');
+
 -- =============================================================================
--- 5. SECURITY & USER PRIVILEGES (Automated Setup)
+-- 6. SECURITY & USER PRIVILEGES (Automated Setup)
 -- =============================================================================
 
 -- Ensure the 'admin' user account exists with a wildcard network host assignment
