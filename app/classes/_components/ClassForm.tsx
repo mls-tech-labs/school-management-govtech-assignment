@@ -100,7 +100,7 @@ export function ClassForm({ teachers, levels }: ClassFormProps) {
           error={errors.teacherEmail}
         />
         {formError ? (
-          <div className="form-level-error" role="alert">
+          <div className="text-danger text-sm mt-2" role="alert">
             {formError}
           </div>
         ) : null}

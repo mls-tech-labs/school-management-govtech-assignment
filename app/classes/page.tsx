@@ -27,23 +27,29 @@ export default function ClassesPage() {
     void load();
   }, []);
 
+  const isEmpty = data !== null && data.length === 0;
+
   return (
     <>
-      <div className="flex items-center justify-between mt-2 mb-6">
-        <h1 className="text-2xl font-bold m-0">Classes</h1>
-        <Link href="/classes/add">
-          <button
-            type="button"
-            className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded border-0 cursor-pointer"
-          >
-            + Add Class
-          </button>
-        </Link>
-      </div>
+      {!isEmpty ? (
+        <div className="flex items-center justify-between mt-2 mb-6">
+          <h1 className="text-2xl font-bold m-0">Classes</h1>
+          <Link href="/classes/add">
+            <button
+              type="button"
+              className="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded border-0 cursor-pointer"
+            >
+              + Add Class
+            </button>
+          </Link>
+        </div>
+      ) : (
+        <h1 className="text-2xl font-bold mt-2 mb-6">Classes</h1>
+      )}
       {data === null && !error ? <LoadingState /> : null}
       {error ? (
         <ErrorState message={error} onRetry={() => void load()} />
-      ) : data && data.length === 0 ? (
+      ) : isEmpty ? (
         <EmptyState
           message="There are no existing classes yet."
           action={{ label: "Add Class", href: "/classes/add" }}

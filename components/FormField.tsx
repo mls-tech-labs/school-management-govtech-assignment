@@ -1,5 +1,4 @@
 "use client";
-import { Form, Input } from "antd";
 
 export interface FormFieldProps {
   label: string;
@@ -14,9 +13,10 @@ export interface FormFieldProps {
 }
 
 /**
- * Shared, feature-agnostic form field. Wraps the Ant Design (`antd`)
- * `<Form.Item>` + `<Input>` primitives and is styled with Tailwind CSS
- * utility classes (per Constitution v2.3.0).
+ * Shared, feature-agnostic form field. Plain HTML `<input>` with
+ * Tailwind utility classes — matches the Add Teacher / Add Class
+ * designs (label above input, red border on error, small red error
+ * text directly below the input).
  *
  * Per Principle VIII (Self-Explanatory, Reusable, Simple), this component
  * has no feature-specific knowledge — `TeacherForm` and `ClassForm` are
@@ -36,30 +36,33 @@ export function FormField({
   const isInvalid = Boolean(error);
   return (
     <div className="mb-4">
-      <Form.Item
-        label={label}
-        htmlFor={name}
+      <label htmlFor={name} className="block font-semibold mb-1">
+        {label}
+      </label>
+      <input
+        id={name}
+        name={name}
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
         required={required}
-        validateStatus={isInvalid ? "error" : undefined}
-        help={error}
-        className="mb-0"
-      >
-        <Input
-          id={name}
-          name={name}
-          type={type}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          required={required}
-          autoComplete={autoComplete}
-          aria-invalid={isInvalid || undefined}
-          aria-describedby={error ? `${name}-error` : undefined}
-          className="w-full"
-        />
-      </Form.Item>
+        autoComplete={autoComplete}
+        aria-invalid={isInvalid || undefined}
+        aria-describedby={error ? `${name}-error` : undefined}
+        className={
+          "w-full px-3 py-2 border rounded bg-surface focus:outline-none focus:ring-2 focus:ring-primary-600 " +
+          (isInvalid
+            ? "border-danger focus:ring-danger"
+            : "border-surface-border")
+        }
+      />
       {error ? (
-        <div id={`${name}-error`} className="sr-only" role="alert">
+        <div
+          id={`${name}-error`}
+          className="text-danger text-sm mt-1"
+          role="alert"
+        >
           {error}
         </div>
       ) : null}

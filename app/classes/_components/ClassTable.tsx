@@ -13,7 +13,7 @@ export function ClassTable({ classes }: { classes: ClassRow[] }) {
       <table className="w-full border-collapse text-left">
         <thead>
           <tr className="border-b border-surface-border bg-surface-muted">
-            <th className="w-16 px-4 py-3 font-semibold">#</th>
+            <th className="w-14 px-4 py-3 font-semibold">#</th>
             <th className="px-4 py-3 font-semibold">Class Level</th>
             <th className="px-4 py-3 font-semibold">Class Name</th>
             <th className="px-4 py-3 font-semibold">Form Teacher</th>

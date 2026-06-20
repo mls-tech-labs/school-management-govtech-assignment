@@ -8,7 +8,6 @@ export interface LevelSelectProps {
   error?: string;
 }
 
-/** Non-searchable Class Level dropdown (mirrors `Subject` dropdown). */
 export function LevelSelect({ levels, value, onChange, error }: LevelSelectProps) {
   return (
     <Select

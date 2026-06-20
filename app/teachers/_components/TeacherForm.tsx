@@ -9,11 +9,6 @@ export interface TeacherFormProps {
   subjects: { name: string; active: boolean }[];
 }
 
-/**
- * Maps Joi's machine-readable error message to the design's friendly
- * English copy. The server envelope keeps Joi's text so the API contract
- * stays testable; the form renders the design copy for the administrator.
- */
 function mapError(field: string, message: string): string {
   const lower = message.toLowerCase();
   if (field === "email" || lower.includes("email")) {
@@ -60,8 +55,6 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
       }
       const data: { error?: string } = await res.json().catch(() => ({}));
       if (res.status === 400) {
-        // Field-level: Joi message references the field path, e.g.
-        // `"contactNumber" must match pattern...`. We map by message key.
         const m = (data.error ?? "").toLowerCase();
         const next: Record<string, string> = {};
         if (m.includes("name")) next.name = mapError("name", data.error ?? "");
@@ -130,7 +123,10 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
           autoComplete="tel"
         />
         {formError ? (
-          <div className="form-level-error" role="alert">
+          <div
+            className="text-danger text-sm mt-2"
+            role="alert"
+          >
             {formError}
           </div>
         ) : null}

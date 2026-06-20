@@ -65,5 +65,11 @@ export async function findTeacherIdByEmail(email: string): Promise<string | null
 
 export async function listTeachers(): Promise<Teacher[]> {
   const ds = await getDataSource();
-  return ds.getRepository(Teacher).find({ order: { email: "ASC" } });
+  // LEFT JOIN subjects so the response carries the subject name even
+  // though `Teacher.subjectRef` is declared `eager: false`. The route
+  // handler maps `t.subjectRef?.name` for the GET response.
+  return ds.getRepository(Teacher).find({
+    relations: { subjectRef: true },
+    order: { email: "ASC" },
+  });
 }
