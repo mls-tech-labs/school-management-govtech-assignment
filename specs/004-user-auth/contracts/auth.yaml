@@ -1,0 +1,424 @@
+openapi: 3.1.0
+info:
+  title: Authentication API
+  version: 0.1.0
+  description: |
+    **Authentication API for Stage 2.**
+
+    This file is the **single source of truth** for the three
+    authentication endpoints owned by `specs/004-user-auth/spec.md`:
+    `POST /api/v1.0/login`, `POST /api/v1.0/logout`,
+    `GET /api/v1.0/me`.
+
+    The endpoints share the cross-cutting contract with Stage 1 —
+    error envelope `{ "error": "..." }`, status-code table
+    (this spec adds `401` for the "no valid session" case; the
+    rest are inherited from
+    [`003-backend-api-db/contracts/common.yaml`](../../003-backend-api-db/contracts/common.yaml)),
+    `Content-Type: application/json` requirement, and the
+    `/api/v1.0/` version prefix (per FR-022 cross-cutting rule).
+
+    See [../spec.md FR-006..FR-028](../spec.md) for the canonical
+    text. The session cookie shape (attributes, expiry, scope)
+    is defined in `components/securitySchemes/SessionCookie`
+    below and is the same `Set-Cookie` payload that the
+    `POST /api/v1.0/login` and `POST /api/v1.0/logout` responses
+    emit.
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: auth
+    description: |
+      Session-based authentication for the single Administrator
+      role. Per constitution Principle IV, the authentication
+      boundary is the `withAuth` middleware applied to every
+      `/api/v1.0/*` endpoint except the explicit exempt list
+      (`POST /api/v1.0/login`, `GET /api/v1.0/me`).
+      `POST /api/v1.0/logout` is idempotent and does not require
+      an existing session.
+
+paths:
+  /api/v1.0/login:
+    post:
+      tags: [auth]
+      summary: Authenticate (mint a session)
+      description: |
+        Verifies the submitted `username` / `password` pair against
+        the `users` table (argon2id password hash, see
+        [`../data-model.md`](../data-model.md) §2). On success,
+        mints a fresh opaque session token (256 bits of CSPRNG
+        entropy, `base64url` encoded — see
+        [`../research.md`](../research.md) §3), writes a Redis
+        session record with a hard 30-minute TTL, and returns the
+        session cookie via `Set-Cookie`.
+
+        The session-fixation defence (spec FR-006 + Clarifications
+        Session 2026-06-21 round 1, Q4) is: the server reads any
+        pre-existing session cookie from the **request**, deletes
+        it from Redis, mints a fresh token, and overwrites the
+        cookie on the **response**. An attacker who pre-seeded a
+        known cookie value cannot ride the session after the
+        victim logs in.
+
+        Unknown username, wrong password, and inactive user all
+        return the same generic `401` body — the server-side log
+        (per FR-027) distinguishes the reasons; the client never
+        sees which credential was wrong.
+
+        Exempt from the auth middleware (spec FR-011). The route
+        handler itself does the credential verification.
+      operationId: login
+      security: [] # explicitly public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            examples:
+              validCredentials:
+                summary: Valid credentials (will mint a session)
+                value:
+                  username: admin
+                  password: correct horse battery staple
+      responses:
+        '200':
+          description: |
+            Credentials verified. The session cookie is set via
+            `Set-Cookie`; the response body is empty. The
+            application MUST NOT return any payload that
+            identifies the user — `GET /api/v1.0/me` is the
+            canonical way to fetch the profile after login.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookieSet'
+          content:
+            application/json:
+              schema: {}
+              examples: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/UnauthorizedLogin'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1.0/logout:
+    post:
+      tags: [auth]
+      summary: Destroy the current session
+      description: |
+        Reads the session cookie from the request, deletes the
+        matching Redis key (no-op if absent — logout is
+        idempotent per spec FR-007), and clears the session
+        cookie on the response via `Set-Cookie` with `Max-Age=0`
+        and a past `Expires` date (per spec FR-018). The
+        response body is empty; the status is `200 OK` in both
+        the "session present" and "session absent" cases.
+
+        The frontend's logout handler also performs a navigation
+        to `/login` (with no `redirectTo` query param) — the
+        server-side logout endpoint does NOT redirect; it is a
+        pure JSON endpoint per Principle VIII (no business logic
+        in the server that the client can do better).
+
+        Exempt from the auth middleware (per the FR-011
+        idempotency exemption — the handler must run even when
+        no session is present so the cookie gets cleared).
+      operationId: logout
+      security: [] # explicitly public — idempotent, no session required
+      responses:
+        '200':
+          description: |
+            Logout completed (or was a no-op). The session
+            cookie is cleared via `Set-Cookie`. The response body
+            is empty.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookieCleared'
+          content:
+            application/json:
+              schema: {}
+              examples: {}
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1.0/me:
+    get:
+      tags: [auth]
+      summary: Introspect the current session
+      description: |
+        Returns the user profile for the calling session. The
+        frontend's route guard (`lib/auth/RouteGuard.tsx`)
+        calls this endpoint on mount for every private page —
+        on `200 OK` the private page renders; on `401` the
+        guard redirects to `/login?redirectTo=<encoded>`.
+
+        The response shape is **exactly** the four fields below
+        and **no other** top-level fields — per spec FR-009 +
+        the cross-cutting FR-020 rule (audit columns hidden).
+        The surrogate `id` and the `created_by` / `modified_*`
+        audit columns are deliberately not exposed.
+
+        Exempt from the auth middleware (spec FR-011) — the
+        visitor cannot be required to present a session cookie
+        to ask whether they have one. The handler itself does
+        the session lookup and returns `401` if the session is
+        missing or invalid.
+      operationId: getMe
+      security: [] # explicitly public — the handler does the lookup itself
+      responses:
+        '200':
+          description: |
+            A valid session was found. The body is the user
+            profile (see `MeResponse` schema).
+          headers:
+            Set-Cookie:
+              description: |
+                Not set on `GET /api/v1.0/me` — the session is
+                **read**, not refreshed; the 30-minute TTL is
+                set on session creation only (spec FR-015,
+                hard TTL, no sliding extension).
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+              example:
+                username: admin
+                active: true
+                ulid: 01HZX8K9V4Q7P3WJRN6B5M2YDC
+                createdAt: '2026-06-21T10:23:45.123456Z'
+        '401':
+          $ref: '#/components/responses/UnauthorizedMe'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: pvt_edu_session
+      description: |
+        The session cookie. Set by `POST /api/v1.0/login`;
+        cleared by `POST /api/v1.0/logout`. Opaque 256-bit
+        `base64url` token (43 chars). Attributes: `HttpOnly`,
+        `Secure` (env-driven per Principle IV), `SameSite=Strict`,
+        `Path=/`, `Max-Age=1800` (= `SESSION_TTL_SECONDS` env var,
+        default 30 minutes). See
+        [`../research.md`](../research.md) §4 for the full
+        attribute table.
+
+  schemas:
+    LoginRequest:
+      type: object
+      description: |
+        The `POST /api/v1.0/login` request body. Both fields are
+        required, non-empty, and length-bounded to the column
+        constraints (`username ≤ 64`, `password ≤ 255` — see
+        [`../data-model.md`](../data-model.md) §2.5 for the Joi
+        schema mirror). Unknown fields are rejected with `400`
+        (spec Edge Cases — defense against a future
+        `rememberMe` field being silently accepted).
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9_.\-@]+$'
+          description: The account username (matches `users.username`).
+        password:
+          type: string
+          minLength: 1
+          maxLength: 255
+          format: password
+          description: |
+            The plaintext password. The server hashes with
+            argon2id and compares against `users.password`; the
+            plaintext never reaches storage, never appears in
+            logs, and never appears in the response body.
+
+    MeResponse:
+      type: object
+      description: |
+        The user profile returned by `GET /api/v1.0/me`. Exactly
+        four top-level fields; no other fields are permitted
+        (per spec FR-009 + cross-cutting FR-020 audit-columns
+        hidden rule). The `createdAt` timestamp is derived from
+        `users.created_at` and is formatted as ISO-8601 with
+        microsecond precision.
+      required: [username, active, ulid, createdAt]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          description: The account username.
+        active:
+          type: boolean
+          description: |
+            Whether the account is currently active. A `false`
+            value blocks login regardless of password correctness.
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+          description: |
+            The 26-character Crockford Base32 ULID — the
+            frontend-stable user handle (per FR-021 cross-cutting
+            rule). Not the same as `users.id` (the surrogate
+            PK, hidden per FR-020).
+        createdAt:
+          type: string
+          format: date-time
+          description: |
+            ISO-8601 timestamp with microsecond precision,
+            derived from `users.created_at`. Example:
+            `'2026-06-21T10:23:45.123456Z'`.
+
+    ErrorResponse:
+      type: object
+      description: |
+        The single error envelope used by every endpoint. Per
+        `003-backend-api-db/spec.md` FR-012 (cross-cutting). The
+        `error` string is a meaningful message for the
+        administrator or the calling code; it MUST NOT leak stack
+        traces, connection strings, file paths, or raw SQL.
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+
+  headers:
+    SessionCookieSet:
+      description: |
+        The `Set-Cookie` header carrying the new session cookie
+        on `POST /api/v1.0/login`. Shape:
+        `pvt_edu_session=<token>; Path=/; Max-Age=1800; HttpOnly;
+        Secure; SameSite=Strict`. The `Secure` flag is
+        env-driven (see [`../research.md`](../research.md) §5).
+      schema:
+        type: string
+        example: |
+          pvt_edu_session=8b3F_4kZxRvQ7m2N1pY0wL5jH9aT6cE2sU4iX7oP3qA; Path=/; Max-Age=1800; HttpOnly; Secure; SameSite=Strict
+
+    SessionCookieCleared:
+      description: |
+        The `Set-Cookie` header that clears the session cookie
+        on `POST /api/v1.0/logout`. Shape:
+        `pvt_edu_session=; Path=/; Max-Age=0; Expires=Thu, 01 Jan
+        1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict`
+        (per spec FR-018 + RFC 6265 §4.1.1).
+      schema:
+        type: string
+        example: |
+          pvt_edu_session=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict
+
+  responses:
+    BadRequest:
+      description: |
+        Request body fails Joi validation (missing field, wrong
+        type, length exceeded, unknown field). Per spec FR-006
+        (validation failure path) + cross-cutting FR-013 (400
+        row). The `error` string identifies the first failing
+        field; it MUST NOT leak database column names or stack
+        traces.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missingUsername:
+              value: { error: '"username" is required' }
+            missingPassword:
+              value: { error: '"password" is required' }
+            unknownField:
+              value: { error: '"rememberMe" is not allowed' }
+            usernameTooLong:
+              value: { error: '"username" length must be less than or equal to 64 characters long' }
+
+    UnauthorizedLogin:
+      description: |
+        The submitted credentials did not match any active user.
+        Returned for **all three** of the "unknown username",
+        "wrong password", and "inactive user" cases with the
+        **same** body — per spec FR-006 + Edge Cases, the
+        response MUST NOT allow an attacker to enumerate valid
+        usernames by probing the endpoint. The server-side log
+        (per FR-027) carries the distinguished reason. No
+        session cookie is set on this response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example: { error: 'Invalid username or password' }
+
+    UnauthorizedMe:
+      description: |
+        No valid session was presented. Returned for the
+        "missing cookie", "unknown cookie", "expired cookie",
+        and "Redis error indistinguishable from missing session"
+        cases — the response is identical across all four per
+        spec FR-013. No body other than the error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example: { error: 'Unauthorized' }
+
+    UnsupportedMediaType:
+      description: |
+        The request `Content-Type` is not `application/json`.
+        Per spec FR-006 (wrong content type path) + cross-cutting
+        FR-013 (415 row). Enforced by the
+        `withApiContract()` route-handler wrapper before the
+        body is read.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example: { error: 'Content-Type must be application/json' }
+
+    InternalServerError:
+      description: |
+        An unhandled server-side failure. The handler's stack
+        trace is logged but never sent to the client. Per
+        cross-cutting FR-013 (500 row).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example: { error: 'Internal server error' }
+
+    ServiceUnavailable:
+      description: |
+        Redis (the session store) is unreachable. Per spec Edge
+        Cases: the auth middleware maps a connection failure to
+        `503` so the client knows to retry. For
+        `POST /api/v1.0/login` and `GET /api/v1.0/me`, the `503`
+        response also means the user must retry the operation;
+        the response does NOT carry a session cookie.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example: { error: 'Service temporarily unavailable, please retry' }
+
+# Apply the SessionCookie security globally; the per-operation
+# `security: []` overrides above make the three auth endpoints
+# public (they handle the session themselves or are intentionally
+# session-free).
+security:
+  - SessionCookie: []

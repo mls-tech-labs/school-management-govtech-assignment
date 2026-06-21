@@ -1,0 +1,436 @@
+openapi: 3.1.0
+info:
+  title: Security Hardening Contract (CORS, CSP, CSRF, XSS)
+  version: 0.1.0
+  description: |
+    **Cross-cutting security contract for Stage 2.**
+
+    This file is the **single source of truth** for the
+    security envelope that the `005-security-hardening`
+    feature applies to **every** `/api/v1.0/*` endpoint —
+    not just new ones. Per spec [FR-016](./../spec.md) and
+    [FR-017](./../spec.md), this feature introduces **zero
+    new endpoints** and **zero new entities**; this contract
+    therefore documents **how every existing endpoint's
+    request and response change**, rather than defining new
+    paths.
+
+    The contract is consumed by:
+
+    - [`../001-teachers/contracts/teachers.yaml`](../../001-teachers/contracts/teachers.yaml)
+      — `POST /api/v1.0/teachers`, `GET /api/v1.0/teachers`
+    - [`../001-teachers/contracts/subjects.yaml`](../../001-teachers/contracts/subjects.yaml)
+      — `GET /api/v1.0/subjects`
+    - [`../002-classes/contracts/classes.yaml`](../../002-classes/contracts/classes.yaml)
+      — `POST /api/v1.0/classes`, `GET /api/v1.0/classes`
+    - [`../002-classes/contracts/levels.yaml`](../../002-classes/contracts/levels.yaml)
+      — `GET /api/v1.0/levels`
+    - [`../004-user-auth/contracts/auth.yaml`](../../004-user-auth/contracts/auth.yaml)
+      — `POST /api/v1.0/login`, `POST /api/v1.0/logout`,
+        `GET /api/v1.0/me`
+
+    Each of those contracts is amended to **reference** this
+    file for the security envelope (per the OpenAPI 3.1
+    `$ref` mechanism), and to add the `X-CSRF-Token`
+    request header on their state-changing operations.
+
+    The five controls documented here are:
+
+    1. **CORS allow-list** — every response sets the
+       appropriate `Access-Control-*` headers when the
+       request's `Origin` is on the allow-list, and rejects
+       (with `403` + no `Access-Control-Allow-Origin` echo)
+       when it is not.
+    2. **CSP + companion headers** — every response carries
+       `Content-Security-Policy`, `X-Content-Type-Options`,
+       `Referrer-Policy`, and (in `NODE_ENV=production`)
+       `Strict-Transport-Security`.
+    3. **CSRF double-submit cookie** — every state-changing
+       request MUST carry an `X-CSRF-Token` request header
+       whose value matches the `csrfToken` cookie set by
+       `POST /api/v1.0/login`. The exempt list is documented
+       below.
+    4. **XSS posture** — the CSP `script-src 'self'`
+       directive blocks injected inline scripts; React's
+       default output encoding prevents string-to-code
+       sinks; Joi rejects malformed input at the trust
+       boundary. No DOMPurify is required (no rich-text
+       fields in Stage 2).
+    5. **Structured security-event logging** — every CORS
+       or CSRF rejection produces exactly one structured
+       log line on stdout (see
+       [`../research.md` §7](../research.md#7-structured-security-event-logging-resolves-spec-fr-021)).
+
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: security
+    description: |
+      Cross-cutting security envelope for every
+      `/api/v1.0/*` endpoint. Not a separate API — this
+      contract is referenced by every endpoint contract.
+
+# ---------------------------------------------------------------------------
+# Security scheme definitions (reusable across all Stage 2 endpoint contracts)
+# ---------------------------------------------------------------------------
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: pvt_edu_session
+      description: |
+        **HttpOnly session cookie** set by
+        `POST /api/v1.0/login` (per
+        [`../004-user-auth/research.md` §4](../../004-user-auth/research.md#4-session-cookie-attributes-resolves-spec-q5--fr-017--fr-018)).
+        Attributes: `Path=/`, `Secure` env-driven
+        (`SESSION_COOKIE_SECURE`, default
+        `NODE_ENV === 'production'`), `SameSite=Strict`,
+        `HttpOnly`, `Max-Age=1800`.
+
+        Every `/api/v1.0/*` endpoint EXCEPT
+        `POST /api/v1.0/login` and `GET /api/v1.0/me`
+        requires this cookie (per spec FR-006 / 004
+        spec FR-011). `POST /api/v1.0/logout` is exempt
+        by idempotency.
+    CsrfTokenCookie:
+      type: apiKey
+      in: cookie
+      name: csrfToken
+      description: |
+        **Non-HttpOnly CSRF cookie** set by
+        `POST /api/v1.0/login` alongside the session
+        cookie. Mirrors the `csrfToken` field on the
+        `SessionRecord` in Redis (per
+        [`../data-model.md` §2](../data-model.md)).
+        Attributes: `Path=/`, `Secure` env-driven
+        (same env var as the session cookie),
+        `SameSite=Strict`, `HttpOnly=false`,
+        `Max-Age=1800`.
+
+        The browser MUST echo the value in the
+        `X-CSRF-Token` request header on every
+        state-changing request. The server-side CSRF
+        middleware does a constant-time compare of the
+        two values and rejects with `403` + `{"error":"csrf"}`
+        on mismatch (per spec FR-006).
+
+  headers:
+    ContentSecurityPolicy:
+      description: |
+        **CSP header** emitted on every response. The
+        shipped policy is the restrictive one from
+        spec FR-003:
+
+        ```
+        default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+        ```
+
+        `script-src` does **not** include `'unsafe-inline'`
+        in production (per spec FR-004). The
+        `style-src 'self' 'unsafe-inline'` is the
+        documented Ant Design / Tailwind JIT relaxation
+        per the constitution Principle IX §2.
+
+        `CSP_REPORT_ONLY=true` switches the header name
+        to `Content-Security-Policy-Report-Only` (per
+        FR-004). The policy string itself is overridable
+        via the `CSP_POLICY` env var (per FR-003).
+
+        Per Clarifications Session 2026-06-21 Q6, the
+        shipped policy **does not** include any
+        `report-uri` / `report-to` directive — there is
+        no server-side CSP report collector in Stage 2.
+      schema:
+        type: string
+        example: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    XContentTypeOptions:
+      description: 'Hard-on companion header per spec FR-005. Value is always `nosniff`.'
+      schema:
+        type: string
+        enum: [nosniff]
+    ReferrerPolicy:
+      description: 'Hard-on companion header per spec FR-005. Value is always `strict-origin-when-cross-origin`.'
+      schema:
+        type: string
+        enum: ['strict-origin-when-cross-origin']
+    StrictTransportSecurity:
+      description: |
+        **HSTS** emitted only in `NODE_ENV=production` and
+        only when `HSTS_ENABLED !== false`. Value is
+        `max-age=63072000; includeSubDomains` per spec
+        FR-005. The header is silently omitted on
+        non-HTTPS requests (browsers ignore it over HTTP
+        anyway).
+      schema:
+        type: string
+        example: 'max-age=63072000; includeSubDomains'
+    AccessControlAllowOrigin:
+      description: |
+        **CORS allow-list response header.** Echoes the
+        allowed origin when the request's `Origin` is on
+        the allow-list; **NOT emitted** when the origin is
+        not on the list (per spec FR-002 — disallowed
+        origins MUST NOT be echoed).
+      schema:
+        type: string
+        example: 'https://app.example.com'
+    AccessControlAllowCredentials:
+      description: |
+        **CORS credentials flag.** Always `true` on
+        responses to allow-listed origins (the session
+        cookie MUST flow). Set per spec FR-002 + the
+        CORS spec.
+      schema:
+        type: string
+        enum: ['true']
+    Vary:
+      description: |
+        **`Vary: Origin` on every response.** Required so
+        HTTP caches key correctly on the `Origin` header
+        (per the CORS spec §6 and per research §2).
+      schema:
+        type: string
+        enum: [Origin]
+
+  parameters:
+    OriginHeader:
+      name: Origin
+      in: header
+      required: false
+      description: |
+        **CORS request header.** Set by the browser on
+        every cross-origin request. The CORS middleware
+        checks this against `CORS_ALLOWED_ORIGINS`
+        (comma-separated, lowercase, exact match).
+        Requests without this header are treated as
+        same-origin and pass through (per
+        [`../research.md` §2](../research.md#2-cors-allow-list-matcher-resolves-spec-fr-001-fr-002)).
+      schema:
+        type: string
+        example: 'https://app.example.com'
+    XCsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: |
+        **CSRF double-submit header.** MUST match the
+        `csrfToken` cookie value on every state-changing
+        request (`POST` / `PUT` / `PATCH` / `DELETE`).
+        Compared in constant time via
+        `crypto.timingSafeEqual`. Missing or mismatched
+        values yield `403 Forbidden` + `{"error":"csrf"}`.
+
+        The CSRF middleware skips the check on
+        `GET`, `HEAD`, and `OPTIONS` (safe methods), and
+        on the explicit exempt list (per spec FR-008):
+
+        - `POST /api/v1.0/login`
+        - `POST /api/v1.0/logout`
+        - `GET /api/v1.0/me`
+      schema:
+        type: string
+        example: 'abc123-base64url-encoded-43-chars'
+
+  responses:
+    CorsForbidden:
+      description: |
+        **CORS rejection.** Returned when the request's
+        `Origin` is not on the `CORS_ALLOWED_ORIGINS`
+        allow-list (or when a preflight request omits the
+        `Origin` header). The response carries NO
+        `Access-Control-Allow-Origin` echo (per FR-002)
+        so the browser blocks the response at the CORS
+        layer.
+      headers:
+        ContentSecurityPolicy:
+          $ref: '#/components/headers/ContentSecurityPolicy'
+        XContentTypeOptions:
+          $ref: '#/components/headers/XContentTypeOptions'
+        ReferrerPolicy:
+          $ref: '#/components/headers/ReferrerPolicy'
+        Vary:
+          $ref: '#/components/headers/Vary'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CorsError'
+    CsrfForbidden:
+      description: |
+        **CSRF rejection.** Returned when a state-changing
+        request arrives without an `X-CSRF-Token` header,
+        with a `csrfToken` cookie but no matching header,
+        or with a mismatched header. The response carries
+        NO `Set-Cookie` (the session is preserved — the
+        request was forged, not the session).
+      headers:
+        ContentSecurityPolicy:
+          $ref: '#/components/headers/ContentSecurityPolicy'
+        XContentTypeOptions:
+          $ref: '#/components/headers/XContentTypeOptions'
+        ReferrerPolicy:
+          $ref: '#/components/headers/ReferrerPolicy'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CsrfError'
+
+  schemas:
+    CorsError:
+      description: |
+        **CORS error envelope.** Reuses the cross-cutting
+        `{ "error": "..." }` envelope from
+        [`../003-backend-api-db/contracts/common.yaml`](../../003-backend-api-db/contracts/common.yaml)
+        with a new discriminator: `cors`.
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          enum: [cors]
+      example:
+        error: cors
+    CsrfError:
+      description: |
+        **CSRF error envelope.** Reuses the cross-cutting
+        `{ "error": "..." }` envelope from
+        [`../003-backend-api-db/contracts/common.yaml`](../../003-backend-api-db/contracts/common.yaml)
+        with a new discriminator: `csrf`.
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          enum: [csrf]
+      example:
+        error: csrf
+
+# ---------------------------------------------------------------------------
+# Shared security envelope (re-applied to every endpoint)
+# ---------------------------------------------------------------------------
+
+# OpenAPI 3.1 does not have a first-class "all operations" mechanism;
+# the per-operation amendments are documented in the README at the top
+# of this file and applied to each endpoint contract by the `tasks.md`
+# Phase 2 work. The shared envelope is:
+
+# REQUEST (every state-changing /api/v1.0/* except the exempt list):
+#   Cookie: csrfToken=<43-char base64url>
+#   X-CSRF-Token: <43-char base64url>      ← MUST match the cookie
+#
+# RESPONSE (every /api/v1.0/* response):
+#   Content-Security-Policy: <policy>
+#   X-Content-Type-Options: nosniff
+#   Referrer-Policy: strict-origin-when-cross-origin
+#   [NODE_ENV=production AND HSTS_ENABLED !== false:]
+#   Strict-Transport-Security: max-age=63072000; includeSubDomains
+#   Vary: Origin
+#   [request's Origin is on the allow-list:]
+#   Access-Control-Allow-Origin: <origin>
+#   Access-Control-Allow-Credentials: true
+#   [request is a preflight from an allowed origin:]
+#   Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD
+#   Access-Control-Allow-Headers: Content-Type, X-CSRF-Token
+
+x-csrf-exempt-list:
+  description: |
+    **CSRF exempt list** (per spec FR-008). The CSRF
+    middleware does NOT apply to these three endpoints.
+    All other `/api/v1.0/*` endpoints require the
+    `X-CSRF-Token` request header on state-changing
+    requests.
+  endpoints:
+    - method: POST
+      path: /api/v1.0/login
+      rationale: |
+        The login endpoint establishes the session that
+        the CSRF token is bound to; requiring a CSRF
+        token before login would deadlock the handshake.
+    - method: POST
+      path: /api/v1.0/logout
+      rationale: |
+        The logout endpoint is idempotent (per 004 spec
+        FR-018); it must run even when no session is
+        present so the response can clear the cookies.
+    - method: GET
+      path: /api/v1.0/me
+      rationale: |
+        `GET` is a safe method and is exempt per spec
+        FR-006; the route is listed explicitly for
+        defensive clarity.
+
+x-preflight-default:
+  description: |
+    **CORS preflight response defaults** for allowed
+    origins (per spec FR-001 + Clarifications Q4). All
+    values are overridable via `.env` keys (per spec
+    FR-022):
+  defaults:
+    AccessControlAllowMethods:
+      value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+      envKey: null  # pinned; no env override in Stage 2
+    AccessControlAllowHeaders:
+      value: 'Content-Type, X-CSRF-Token'
+      envKey: CORS_ALLOWED_HEADERS
+      default: 'Content-Type, X-CSRF-Token'
+    AccessControlAllowCredentials:
+      value: 'true'
+      envKey: null  # hard-on per FR-002
+    Vary:
+      value: 'Origin'
+      envKey: null  # required for HTTP caches
+
+x-csp-policy:
+  description: |
+    **Shipped CSP policy** (per spec FR-003). Overridable
+    via the `CSP_POLICY` env var (per FR-022).
+  policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  notes:
+    - "`script-src 'self'` — no `'unsafe-inline'` in production (per FR-004). Stage 2 ships no inline scripts."
+    - "`style-src 'self' 'unsafe-inline'` — the documented Ant Design / Tailwind JIT relaxation per the constitution Principle IX §2."
+    - "No `report-uri` / `report-to` directive (per Clarifications Q6 — no server-side collector in Stage 2)."
+    - "`CSP_REPORT_ONLY=true` switches the header name to `Content-Security-Policy-Report-Only` (per FR-004); the browser then enforces in observe-only mode and prints violations to its dev-tools console."
+
+x-companion-headers:
+  description: |
+    **Hard-on companion headers** on every response (per
+    spec FR-005). No toggle.
+  headers:
+    - name: X-Content-Type-Options
+      value: nosniff
+    - name: Referrer-Policy
+      value: strict-origin-when-cross-origin
+
+x-hsts-policy:
+  description: |
+    **HSTS policy** (per spec FR-005 + FR-014). Emitted
+    only in `NODE_ENV=production` AND when
+    `HSTS_ENABLED !== false`. Default for
+    `HSTS_ENABLED` is `true` in production and `false`
+    in development.
+  value: 'max-age=63072000; includeSubDomains'
+  envKey: HSTS_ENABLED
+  defaultProduction: true
+  defaultDevelopment: false
+
+x-log-events:
+  description: |
+    **Structured log events emitted to stdout** by the
+    hardening middleware (per spec FR-021 + SC-011).
+    See [`../research.md` §7](../research.md#7-structured-security-event-logging-resolves-spec-fr-021)
+    for the line shape. CSP report-only violations are
+    NOT server-side observable (per Clarifications Q6).
+  events:
+    - event: cors_rejected
+      emittedWhen: 'the CORS middleware rejects a cross-origin request'
+      mandatoryFields: [event, method, path, origin, reason, timestamp]
+      neverIncludes: [sessionCookie, csrfToken, requestBody, responseBody]
+    - event: csrf_rejected
+      emittedWhen: 'the CSRF middleware rejects a state-changing request'
+      mandatoryFields: [event, method, path, origin, reason, timestamp]
+      neverIncludes: [sessionCookie, csrfToken, requestBody, responseBody]

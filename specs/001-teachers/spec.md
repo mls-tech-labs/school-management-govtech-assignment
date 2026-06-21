@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-teachers`
 **Created**: 2026-06-18
-**Status**: Draft
+**Status**: Draft(Stage 1 + Stage 2 cross-cutting amendments)
 **Input**: User description: "Please help to create 3 feature specifications. 1 for teachers, 2 Classes, 3 Backend api and DB manipulations. Please refer to the .requirements/Full Stack Assignment.md file for teachers and Classes behaviors. you may capture the all data fields from the UI for DB table models. UI must be matched on the designs provided."
 
 ## Clarifications
@@ -38,6 +38,20 @@
 
 - Q: `subject` on POST teachers is currently a string on the wire — should it stay a string, or become a nested `{ ulid, name }` object so the frontend can reuse the `ulid` it received from GET `/api/v1.0/subjects`? → A: Wrap `subject` as a nested `{ ulid, name }` object in the POST request body. The `ulid` is the server-side lookup key (single indexed equality test against `uq_subjects_ulid`); the `name` is a display hint, optional, and ignored server-side. A POST whose `ulid` matches an active entry is accepted regardless of `name`; mismatched or missing `name` is NOT an error. This rule is owned by `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20 and propagated by reference to this spec, FR-005a, FR-006, FR-007, FR-010, and the contract files in `./contracts/`.
 - Q: GET response shape for teachers — mirror the nested `{ ulid, name }` shape, keep the current flat string for `subject`, or over-fetch both? → A: Mirror the nested shape on GET responses. Teacher `subject` returns `{ ulid, name }` on every entry in `GET /api/v1.0/teachers`. Round-tripping is consistent (`request.subject` ≅ `response.subject`); the `ulid` is already exposed as the frontend-stable sync handle (per FR-014).
+
+### Session 2026-06-21 (401 propagation)
+
+- Q1: After Stage 2 ships, every protected `/api/v1.0/*` endpoint
+  returns `401 Unauthorized` when accessed without a valid session
+  cookie. Should this FR-010 status code table add the `401` row?
+  → A: **Yes — add the 401 row only.** The row is inserted between
+  `400 Bad Request` and `409 Conflict`, with a one-line note that
+  401 is inherited from `specs/003-backend-api-db/spec.md` FR-013
+  (owned by `specs/004-user-auth/spec.md`'s auth middleware). No
+  other Stage 2 details (CSRF / CORS / XSS posture) are added here —
+  those are owned by `specs/005-security-hardening/spec.md` and
+  apply at the HTTP boundary without changing the status code
+  mapping.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -98,7 +112,7 @@ An administrator navigates to the Teachers screen and sees the complete list of 
 - **FR-007**: The system MUST expose a public API endpoint at `GET /api/v1.0/teachers` (per FR-022, owned by `003-backend-api-db`) to list all teachers that, on success, returns the full list of teachers wrapped in a `data` array with HTTP status 200, with each entry containing `name`, `subject` (nested `{ ulid, name }` per FR-005a and `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20 (POST/GET reference object shape)), `email`, `contactNumber`, and `ulid` (per FR-014). The `GET /api/v1.0/subjects` endpoint returns the active `subjects` reference list as `{ name, active, ulid }` entries. Stage 1 does not paginate; the response is the complete set (see Clarifications, Session 2026-06-18).
 - **FR-008**: The system MUST provide a screen titled "Teachers" that lists the registered teachers with each entry showing `name`, `subject.name` (resolved from the nested `{ ulid, name }` object on each entry), `email`, and `contactNumber`, in a layout consistent with the Figma design (`./designs/teachers/Teachers - Empty State.png` and `./designs/teachers/Teachers - Filled State.png`).
 - **FR-009**: The Teachers screen MUST present an empty state when no teachers are registered, and a filled state when at least one teacher exists, both matching the corresponding Figma design.
-- **FR-010**: All API endpoints for this feature MUST, on any error condition, return a JSON response body of the form `{ "error": "Some meaningful error message" }` together with an appropriate HTTP status code. The status-code mapping MUST be: `400 Bad Request` for Joi / payload validation failures (invalid email, bad contact number, missing required field, unknown/inactive `subject.ulid`); `409 Conflict` for duplicate email; `415 Unsupported Media Type` for requests whose `Content-Type` is not `application/json`; `500 Internal Server Error` for unhandled server failures; `503 Service Unavailable` when the data store is briefly unreachable.
+- **FR-010**: All API endpoints for this feature MUST, on any error condition, return a JSON response body of the form `{ "error": "Some meaningful error message" }` together with an appropriate HTTP status code. The status-code mapping MUST be: `400 Bad Request` for Joi / payload validation failures (invalid email, bad contact number, missing required field, unknown/inactive `subject.ulid`); `401 Unauthorized` for protected endpoints accessed without a valid session cookie (inherited from `specs/003-backend-api-db/spec.md` FR-013; the auth middleware is owned by `specs/004-user-auth/spec.md` and rejects the request before the handler runs); `409 Conflict` for duplicate email; `415 Unsupported Media Type` for requests whose `Content-Type` is not `application/json`; `500 Internal Server Error` for unhandled server failures; `503 Service Unavailable` when the data store is briefly unreachable.
 - **FR-011**: The Add Teacher screen MUST preserve the administrator's input on a failed submission and surface the field-level errors shown in the `Add Teacher - Error State.png` design.
 - **FR-012**: Teacher data MUST be persisted so that it survives server restarts and is available to other features (e.g., assigning a teacher as a form teacher for a class).
 - **FR-013** (inherited from `003-backend-api-db/spec.md` FR-018 / FR-019 / FR-020 — audit columns): Both the `teachers` and `subjects` tables MUST carry the six-column audit pattern (`id`, `created_at`, `created_by`, `modified_at`, `modified_by`, `version`). `id` is the surrogate primary key on both tables; `teachers.email` and `subjects.name` are preserved as `UNIQUE NOT NULL`; the foreign key column in `teachers` is renamed `subject_id` and references `subjects.id`. The Stage 1 public API responses continue to expose natural-key field names (`teachers.email`, `teachers.subject`, `subjects.name`, `subjects.active`) — none of the audit columns are exposed in the response body.
@@ -139,6 +153,6 @@ An administrator navigates to the Teachers screen and sees the complete list of 
 - The Add Teacher form's field types (e.g., text input, numeric input, validation rules) follow the Figma designs in `./designs/teachers/`. If the Figma design is later updated, the spec will be amended accordingly.
 - The Filled State design referenced in the requirements (`./designs/teachers/Teachers - Filled State.png`) is provided by the design team; until it is available, the Filled State is implemented to mirror the data shape shown in the Filled State for the Classes screen.
 - Persistence layer, API framework, and frontend library are not constrained by this spec; they are decided in `plan.md` (see `.specify/memory/constitution.md` for the project's technical stack constraints).
-- Login, authentication, and role-based access control are explicitly out of scope per the requirements ("you do not need to implement login and access control").
+- role-based access control are explicitly out of scope per the requirements.
 - The `subjects` reference list is seeded in Stage 1 and treated as read-only by the Teachers feature; an admin UI or API to author new subjects is out of Stage 1 scope (see Clarifications, Session 2026-06-18).
 - Stage 1 assumes a realistic upper bound of **≤ 500 teachers** for the system. The GET endpoint returns the full list in a single response (no pagination); if the school outgrows this bound, pagination is added in a future stage as an amendment to FR-007 (see Clarifications, Session 2026-06-18).

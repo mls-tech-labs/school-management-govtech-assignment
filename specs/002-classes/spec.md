@@ -2,7 +2,7 @@
 
 **Feature Branch**: `002-classes`
 **Created**: 2026-06-18
-**Status**: Draft
+**Status**: Draft(Stage 1 + Stage 2 cross-cutting amendments)
 **Input**: User description: "create the classes feature"
 
 ## Clarifications
@@ -36,6 +36,20 @@
 
 - Q: `level` and `teacherEmail` on POST classes are currently strings on the wire — should they stay as strings, or become nested `{ ulid, name }` objects so the frontend can reuse the `ulid` it received from GET `/api/v1.0/levels` and GET `/api/v1.0/teachers`? → A: Wrap both as nested `{ ulid, name }` objects in the POST request body: `level: { ulid, name }` and `formTeacher: { ulid, name }` (the previous `teacherEmail` string field is replaced by the nested `formTeacher` object). The `ulid` is the server-side lookup key (single indexed equality test against `uq_levels_ulid` / `uq_teachers_ulid`); the `name` is a display hint, optional, and ignored server-side. A POST whose `ulid` matches an active entry is accepted regardless of `name`; mismatched or missing `name` is NOT an error. The Add Class UI's Form Teacher dropdown (Q2, Session 2026-06-18) is unchanged in behaviour — it is still a searchable dropdown of existing teachers — but the value it submits is now the selected teacher's `ulid` (nested under `formTeacher.ulid`) rather than the selected teacher's `email`. This rule is owned by `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20 and propagated by reference to this spec, FR-004, FR-005, FR-005a, FR-005b, FR-006, FR-007, FR-010, and the contract files in `./contracts/`.
 - Q: GET response shape for classes — mirror the nested `{ ulid, name }` shape, keep the current flat strings for `level` and `formTeacher.name`, or over-fetch both? → A: Mirror the nested shape on GET responses. Class `level` returns `{ ulid, name }`; class `formTeacher` returns `{ ulid, name }` (the existing `name` field stays, `ulid` is added). Round-tripping is consistent (`request.level` ≅ `response.level`; `request.formTeacher` ≅ `response.formTeacher`); the `ulid` is already exposed as the frontend-stable sync handle (per FR-014).
+
+### Session 2026-06-21 (401 propagation)
+
+- Q1: After Stage 2 ships, every protected `/api/v1.0/*` endpoint
+  returns `401 Unauthorized` when accessed without a valid session
+  cookie. Should this FR-010 status code table add the `401` row?
+  → A: **Yes — add the 401 row only.** The row is inserted between
+  `400 Bad Request` and `404 Not Found`, with a one-line note that
+  401 is inherited from `specs/003-backend-api-db/spec.md` FR-013
+  (owned by `specs/004-user-auth/spec.md`'s auth middleware). No
+  other Stage 2 details (CSRF / CORS / XSS posture) are added here —
+  those are owned by `specs/005-security-hardening/spec.md` and
+  apply at the HTTP boundary without changing the status code
+  mapping.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -101,7 +115,7 @@ An administrator navigates to the Classes screen and sees the complete list of c
 - **FR-007**: The system MUST expose a public API endpoint at `GET /api/v1.0/classes` (per FR-022, owned by `003-backend-api-db`) to list all classes that, on success, returns the full list of classes wrapped in a `data` array with HTTP status 200, with each entry containing `ulid` (per FR-014), `name`, `level` (nested `{ ulid, name }` per FR-005a and `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20 (POST/GET reference object shape)), and `formTeacher` (nested `{ ulid, name }` per FR-004). Stage 1 does not paginate; the response is the complete set (see Clarifications, Session 2026-06-18).
 - **FR-008**: The system MUST provide a screen titled "Classes" that lists the registered classes with each entry showing `level.name` (resolved from the nested `{ ulid, name }` object on each entry), `name`, and `formTeacher.name` (resolved from the nested `{ ulid, name }` object on each entry), in a layout consistent with the Figma design (`./designs/classes/Classes - Empty State.png` and `./designs/classes/Classes - Filled State.png`).
 - **FR-009**: The Classes screen MUST present an empty state when no classes are registered, and a filled state when at least one class exists, both matching the corresponding Figma design.
-- **FR-010**: All API endpoints for this feature MUST, on any error condition, return a JSON response body of the form `{ "error": "Some meaningful error message" }` together with an appropriate HTTP status code. The status-code mapping MUST be: `400 Bad Request` for Joi / payload validation failures (missing/invalid `level.ulid`, `name`, or `formTeacher.ulid`; unknown/inactive `level.ulid`); `404 Not Found` for a non-existent teacher (`formTeacher.ulid` does not match any registered teacher); `409 Conflict` for "teacher already assigned" to another class **or** duplicate class `name`; `415 Unsupported Media Type` for requests whose `Content-Type` is not `application/json`; `500 Internal Server Error` for unhandled server failures; `503 Service Unavailable` when the data store is briefly unreachable.
+- **FR-010**: All API endpoints for this feature MUST, on any error condition, return a JSON response body of the form `{ "error": "Some meaningful error message" }` together with an appropriate HTTP status code. The status-code mapping MUST be: `400 Bad Request` for Joi / payload validation failures (missing/invalid `level.ulid`, `name`, or `formTeacher.ulid`; unknown/inactive `level.ulid`); `401 Unauthorized` for protected endpoints accessed without a valid session cookie (inherited from `specs/003-backend-api-db/spec.md` FR-013; the auth middleware is owned by `specs/004-user-auth/spec.md` and rejects the request before the handler runs); `404 Not Found` for a non-existent teacher (`formTeacher.ulid` does not match any registered teacher); `409 Conflict` for "teacher already assigned" to another class **or** duplicate class `name`; `415 Unsupported Media Type` for requests whose `Content-Type` is not `application/json`; `500 Internal Server Error` for unhandled server failures; `503 Service Unavailable` when the data store is briefly unreachable.
 - **FR-011**: The Add Class screen MUST preserve the administrator's input on a failed submission and surface the field-level errors shown in the Figma error state.
 - **FR-012**: Class data and the form-teacher relationship MUST be persisted so that they survive server restarts and remain consistent with the Teachers feature (i.e., a class's form teacher is always an existing teacher).
 - **FR-013** (inherited from `003-backend-api-db/spec.md` FR-018 / FR-019 / FR-020 — audit columns): Both the `classes` and `levels` tables MUST carry the six-column audit pattern (`id`, `created_at`, `created_by`, `modified_at`, `modified_by`, `version`). `id` is the surrogate primary key on both tables; `classes.name` and `levels.name` are preserved as `UNIQUE NOT NULL`; the foreign key columns in `classes` are renamed `level_id` and `form_teacher_id`, referencing `levels.id` and `teachers.id` respectively. The Stage 1 public API responses continue to expose natural-key field names (`classes.level`, `classes.name`, `classes.formTeacher.name`, `levels.name`, `levels.active`) — none of the audit columns are exposed in the response body.
@@ -151,4 +165,4 @@ An administrator navigates to the Classes screen and sees the complete list of c
 - The `Class` table has a numeric, auto-generated `id` primary key (surrogate). The `id` is **not** included in the Stage 1 API response — the wire shape remains `{ "ulid", "level", "name", "formTeacher": { "name" } }` for each entry in `GET /api/v1.0/classes` and the POST response is a confirmation. The column exists so a future edit/delete endpoint can route by id without a schema migration (see Clarifications, Session 2026-06-18).
 - The cross-cutting status-code table for this spec includes `400` (validation) / `404` (teacher not found) / `409` (duplicate name or teacher already assigned) / `415` (request `Content-Type` is not `application/json`) / `500` (unhandled server failure) / `503` (data store briefly unreachable). Aligns with `003-backend-api-db/spec.md` Clarifications, Session 2026-06-18.
 - The Classes feature does not edit or delete classes in v1; create and list are the only two operations. Edit/delete are out of scope until a future feature amends this spec.
-- Login, authentication, and role-based access control are explicitly out of scope per the requirements ("you do not need to implement login and access control").
+- role-based access control are explicitly out of scope per the requirements ("you do not need to implement login and access control").

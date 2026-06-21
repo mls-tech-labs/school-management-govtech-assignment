@@ -2,7 +2,7 @@
 
 **Feature Branch**: `003-backend-api-db`
 **Created**: 2026-06-18
-**Status**: Draft
+**Status**: Draft (Stage 1 + Stage 2 cross-cutting amendments)
 **Input**: User description: "create the backend apis and db schema feature"
 
 ## Clarifications
@@ -48,6 +48,57 @@
   - `POST /api/v1.0/classes` and `GET /api/v1.0/classes` (owned by `002-classes`).
   - `GET /api/v1.0/levels` (owned by `002-classes`).
   The version `v1.0` is literal (not a placeholder for "current major.minor"); future stages add `v1.1`, `v2.0`, etc. This rule is owned by this spec (003) and propagated by reference to all contracts in `001-teachers/contracts/` and `002-classes/contracts/`.
+
+### Session 2026-06-21 (version-prefix propagation)
+
+- Q1: Should the three auth endpoints (`POST /api/login`, `POST /api/logout`, `GET /api/me` from `004-user-auth`) be moved under the `/api/v1.0/` prefix (dropping the unversioned exemption), or stay unversioned? → A: **Version them** — the three auth endpoints are exposed at `POST /api/v1.0/login`, `POST /api/v1.0/logout`, `GET /api/v1.0/me`. The unversioned exemption is removed; FR-022 below is updated to list all seven endpoints under the same prefix. The constitution v2.4.0 Stage 2 In Scope block already committed to versioned paths; this clarification propagates that commitment to `004-user-auth/spec.md` and `005-security-hardening/spec.md` (the CSRF exempt list). The Stage 1 contracts in `001-teachers/contracts/` and `002-classes/contracts/` are unchanged.
+
+### Session 2026-06-21 (status-code propagation)
+
+- Q1: Should the **`401 Unauthorized`** status code (used by the 004
+  auth middleware when a protected endpoint is accessed without a
+  valid session) be moved from `004-user-auth/spec.md` into the
+  cross-cutting status code table (FR-013 above) for consistency with
+  the other shared codes (`400 / 404 / 409 / 415 / 500 / 503`)? → A:
+  **Yes — move only 401.** The row is added to FR-013 between `400`
+  and `404`, with a one-line note that 401 is returned by the auth
+  middleware (owned by 004) before the handler runs. The exempt list
+  stays in 004 (it's auth-specific). All other 004 details (session
+  cookie attributes, the `users` table, the Redis session store,
+  session-fixation prevention, login/logout/me endpoints, login
+  observability) are auth-flow-specific and remain in 004 — they do
+  NOT belong in the cross-cutting contract.
+
+### Session 2026-06-21 (Stage 2 amendments)
+
+- Q2: How should this spec (003) acknowledge Stage 2 (the auth feature
+  in 004 and the hardening feature in 005)? Several Stage 1
+  Assumptions are now stale: "login, authentication... out of scope";
+  "all endpoints are read or write operations on the entities above
+  ... no additional endpoints in scope for v1"; and the migrations
+  Assumption that says "not used in Stage 1". The Status header also
+  doesn't reflect that 003 now covers Stage 2 cross-cutting
+  concerns. → A: **Minimal note** — bump the Status header to "Draft
+  (Stage 1 + Stage 2 cross-cutting amendments)"; update the two
+  stale Assumptions inline with a "Stage 1 only" marker; update the
+  migrations Assumption to cover Stage 1 or Stage 2; add a `### Stage
+  2 cross-cutting amendments` sub-section in the Assumptions block
+  that summarises the auth-boundary addition, the three new auth
+  endpoints, the hardening scope, and the list of consumers (001,
+  002, 004, 005). The functional FRs are unchanged.
+- Q3: Should `FR-002` / `FR-003` (the Stage 1 endpoint inventory —
+  teachers, classes, subjects, levels) also include 004's three
+  Stage 2 auth endpoints (`POST /api/v1.0/login`,
+  `POST /api/v1.0/logout`, `GET /api/v1.0/me`) for a single
+  consolidated endpoint inventory, or stay Stage 1-only? → A:
+  **Keep FR-002 / FR-003 Stage 1-only**; reference the auth endpoints
+  via `FR-022` (which already lists all 7 endpoints under the
+  `/api/v1.0/` prefix). FR-002 / FR-003 describe the Stage 1 features
+  (teachers, classes, their reference lists) in detail; adding auth
+  endpoints there would dilute that focus. FR-022 is the single
+  source of truth for the version-prefix inventory. 004 owns the
+  auth endpoints' functional details (request body shape, response
+  shape, error envelope, session-fixation prevention).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -470,6 +521,15 @@ code mapping.
     field-level validation (e.g., invalid email format, invalid contact
     number, missing required field, unknown `subject.ulid`, unknown
     `level.ulid`).
+  - `401 Unauthorized` — a protected endpoint is accessed without a
+    valid session cookie; the auth middleware (owned by
+    `specs/004-user-auth/spec.md`) rejects the request before the
+    handler runs. The exempt list is owned by 004 (currently
+    `POST /api/v1.0/login` and `GET /api/v1.0/me`; logout is exempt
+    by idempotency and `GET` exemption). (Per
+    `specs/004-user-auth/spec.md` Clarification Session
+    2026-06-21, Q1 — status code propagation: 401 was promoted
+    from a 004 Assumption into this cross-cutting table.)
   - `404 Not Found` — a referenced teacher (`formTeacher.ulid`) does
     not exist when creating a class.
   - `409 Conflict` — a uniqueness or referential-integrity rule is
@@ -481,7 +541,8 @@ code mapping.
   - `415 Unsupported Media Type` — request `Content-Type` is not
     `application/json`.
   - `500 Internal Server Error` — unexpected server-side failure.
-  - `503 Service Unavailable` — the data store is briefly unreachable.
+  - `503 Service Unavailable` — the data store (or the Redis session
+    store, per 004) is briefly unreachable.
   The Stage 1 version prefix `/api/v1.0/` (per FR-022) does not change
   the status code mapping — the same status codes apply to the
   versioned paths.
@@ -506,20 +567,22 @@ code mapping.
   the reference-list seed list — is removed in line with FR-016; the
   `subjects` and `levels` seed data is delivered by the user's own SQL
   against the user-prepared MySQL container).
-- **FR-022**: All Stage 1 API endpoints MUST be exposed under the path
-  prefix `/api/v1.0/`. The four Stage 1 endpoints are:
+- **FR-022**: All Stage 1 and Stage 2 API endpoints MUST be exposed
+  under the path prefix `/api/v1.0/`. The seven endpoints are:
   - `POST /api/v1.0/teachers` and `GET /api/v1.0/teachers` (owned by
     `001-teachers`).
   - `GET /api/v1.0/subjects` (owned by `001-teachers`).
   - `POST /api/v1.0/classes` and `GET /api/v1.0/classes` (owned by
     `002-classes`).
   - `GET /api/v1.0/levels` (owned by `002-classes`).
+  - `POST /api/v1.0/login` and `POST /api/v1.0/logout` and
+    `GET /api/v1.0/me` (owned by `004-user-auth`).
   The version string `v1.0` is literal (not a placeholder for "current
-  major.minor"); future stages add `v1.1`, `v2.0`, etc. The Stage 1
-  contracts in `001-teachers/contracts/` and `002-classes/contracts/`
-  MUST mirror the same prefix. Unversioned paths (e.g., `/api/teachers`)
-  are out of Stage 1 scope; the route handlers MUST NOT be reachable at
-  the unversioned path.
+  major.minor"); future stages add `v1.1`, `v2.0`, etc. The contracts
+  in `001-teachers/contracts/`, `002-classes/contracts/`, and
+  `004-user-auth/contracts/` MUST mirror the same prefix. Unversioned
+  paths (e.g., `/api/teachers`, `/api/login`) are out of scope; the
+  route handlers MUST NOT be reachable at the unversioned path.
 
 ### Key Entities
 
@@ -673,9 +736,10 @@ per-entity blocks stay focused on the domain columns.
 - The frontend (the Teachers and Classes features) is the primary
   consumer of the API; the API MAY be consumed by other clients in the
   future, but those consumers are out of scope for v1.
-- Login, authentication, and per-action authorization are explicitly out
-  of scope (per the requirements); the API is open to any caller in the
-  current scope.
+- In Stage 1, login, authentication, and per-action authorization are
+  explicitly out of scope (per the original requirements); the API is
+  open to any caller in Stage 1. (Stage 2 brings authentication in
+  scope — see "Stage 2 cross-cutting amendments" below.)
 - The data store is a relational database (per the requirements: "Using
   a RDBMS is highly recommended"). The exact engine and the data-access
   layer are decided in `plan.md` and are not constrained by this spec.
@@ -692,17 +756,20 @@ per-entity blocks stay focused on the domain columns.
   Teachers and Classes features' UI code (Add Teacher, Teachers,
   Add Class, Classes) is responsible for surfacing these errors to
   the administrator in a meaningful way.
-- Migrations are **not** used in Stage 1. The MySQL schema, audit
-  columns, ULID column, FK constraints, `UNIQUE` indexes, and the
-  `subjects` / `levels` reference-list seed data are all created by
-  the user against the user-prepared MySQL container. The application
-  is read/write at runtime only — `docker compose up` MUST NOT run a
-  typeORM migration or any equivalent schema-creation step (per
-  FR-016).
-- All endpoints are read or write operations on the entities
-  above. There are no additional endpoints (e.g., health checks,
-  metrics, administrative endpoints) in scope for v1. Health checks
-  MAY be added later as a separate feature.
+- Migrations are **not** used in Stage 1 or Stage 2. The MySQL schema,
+  audit columns, ULID column, FK constraints, `UNIQUE` indexes, and the
+  `subjects` / `levels` reference-list seed data (Stage 1), plus the
+  `users` table (Stage 2, per `specs/004-user-auth/spec.md`), are all
+  created by the user against the user-prepared MySQL container. The
+  application is read/write at runtime only — `docker compose up` MUST
+  NOT run a typeORM migration or any equivalent schema-creation step
+  (per FR-016).
+- In Stage 1, all endpoints are read or write operations on the
+  `subjects`, `teachers`, `levels`, and `classes` entities. Stage 2
+  adds three cross-cutting auth endpoints (`login`, `logout`, `me`)
+  under the same `/api/v1.0/` prefix — see "Stage 2 cross-cutting
+  amendments" below and FR-022. Health checks and other administrative
+  endpoints remain out of scope.
 - The `subjects` and `levels` reference tables are seeded in Stage 1
   and treated as read-only by the API; no POST/PUT/DELETE endpoint
   for either table is in scope. Admin authoring of reference-list
@@ -717,3 +784,29 @@ per-entity blocks stay focused on the domain columns.
   constitution, not in this spec); the API contract itself is unchanged.
   See `001-teachers/spec.md` and `002-classes/spec.md` Clarifications,
   Session 2026-06-19, for the per-feature translation of the amendment.
+
+### Stage 2 cross-cutting amendments (added 2026-06-21, per
+`specs/003-backend-api-db` Clarification Session 2026-06-21, Q2, and
+the constitution v2.4.0 amendment):
+
+- **Consumers of this contract.** `specs/001-teachers/spec.md` and
+  `specs/002-classes/spec.md` (Stage 1; both inherit FR-013 and
+  FR-022), `specs/004-user-auth/spec.md` (Stage 2; the three auth
+  endpoints are listed in FR-022 and the 401 status code is driven
+  by the 004 auth middleware), and `specs/005-security-hardening/spec.md`
+  (Stage 2; the four Principle IX controls apply at the HTTP boundary
+  and add no new status code beyond `401`).
+- **Authentication is in scope.** The session-based authentication
+  boundary (Stage 2 In Scope — `specs/004-user-auth/spec.md`) protects
+  every `/api/v1.0/*` endpoint except the auth-middleware exempt list
+  (`POST /api/v1.0/login` and `GET /api/v1.0/me`; logout is exempt by
+  idempotency and `GET`-method exemption). The `401 Unauthorized` row
+  in FR-013 is the cross-cutting status code for "no valid session";
+  the auth middleware itself is owned by 004 and described there.
+- **Stage 1 assumptions above describe Stage 1 scope.** Where an
+  Assumption says "Stage 1", the rule continues to apply to Stage 2
+  unless explicitly superseded by this amendments section.
+- **Hardening is in scope** (`specs/005-security-hardening/spec.md`)
+  but adds no new status codes and no new endpoints; it applies the
+  four Principle IX controls at the HTTP boundary and is invisible to
+  the FR-013 / FR-022 contract.
