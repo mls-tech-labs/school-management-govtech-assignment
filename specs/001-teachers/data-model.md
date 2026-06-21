@@ -23,7 +23,7 @@ but the Classes-side implementation is owned by `002-classes` /
 | `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | yes | PK | — | Surrogate primary key (per `003-backend-api-db/spec.md` FR-018). The Stage 1 API does not expose this column in the response. |
 | `ulid` | `CHAR(26)` | yes | yes (`UNIQUE` via `uq_teachers_ulid`) | — | 26-character Crockford Base32 ULID. Generated server-side on insert by the `ulid` npm package via `lib/ulid.ts` (per FR-021 — Session 2026-06-20 ULID clarification). The frontend-stable row handle; exposed in every Stage 1 GET and POST response. NOT a FK target. |
 | `name` | `VARCHAR(255)` (or longer) | yes | no | `Joi.string().trim().min(1).max(255).required()` | The teacher's full name. Free-text; no further structure. |
-| `subject_id` | `BIGINT UNSIGNED` | yes | FK | `Joi.string().valid(...activeSubjectNames).required()` (mapped to subject name) | Foreign key to `subjects.id` (per FR-019). The Joi schema validates the public-API field `subject` (which carries the referenced subject's `name`), not the internal FK id. |
+| `subject_id` | `BIGINT UNSIGNED` | yes | FK | `Joi.object({ ulid: Joi.string().length(26).required(), name: Joi.string().max(64).optional() }).required()` (mapped via `subject.ulid`) | Foreign key to `subjects.id` (per FR-019). The Joi schema validates the nested `subject.ulid` (the server-side lookup key, resolved against `uq_subjects_ulid`); the nested `subject.name` is a display hint and is ignored server-side (per Clarifications, Session 2026-06-20 (POST/GET reference object shape)). |
 | `email` | `VARCHAR(254)` | yes | yes (UNIQUE NOT NULL) | `Joi.string().email({ tlds: false }).trim().lowercase().max(254).required()` | The domain-natural identifier for a teacher (was the PK; now `UNIQUE NOT NULL` per FR-018). The DB enforces the `UNIQUE` constraint; the route handler translates the typeORM unique-constraint error into `409 Conflict`. |
 | `contactNumber` | `CHAR(8)` (fixed) | yes | no | `Joi.string().pattern(/^\d{8}$/).required()` | Exactly 8 digits, digits-only, no leading-digit restriction (per FR-004, Session 2026-06-21). The Joi regex `/^\d{8}$/` is the single source of truth. |
 | `created_at` | `DATETIME(6)` | yes (default) | no | — | Set once at insert via `DEFAULT CURRENT_TIMESTAMP(6)` (per FR-018). typeORM `@CreateDateColumn`. |
@@ -107,13 +107,19 @@ export class Teacher {
 ```ts
 // lib/validation/teacher.ts
 import Joi from "joi";
-import { getActiveSubjectNames } from "../db/repositories/subject-repo";
+import { getActiveSubjectUlids } from "../db/repositories/subject-repo";
 
 export async function buildCreateTeacherSchema() {
-  const subjects = await getActiveSubjectNames();
+  const activeSubjectUlids = await getActiveSubjectUlids();
   return Joi.object({
     name: Joi.string().trim().min(1).max(255).required(),
-    subject: Joi.string().valid(...subjects).required(),
+    // Per Clarifications, Session 2026-06-20 (POST/GET reference object shape):
+    //   subject.ulid is the server-side lookup key (validated against uq_subjects_ulid);
+    //   subject.name is a display hint and is ignored server-side.
+    subject: Joi.object({
+      ulid: Joi.string().length(26).valid(...activeSubjectUlids).required(),
+      name: Joi.string().min(1).max(64).optional(),
+    }).required(),
     email: Joi.string().email({ tlds: false }).trim().lowercase().max(254).required(),
     contactNumber: Joi.string().pattern(/^\d{8}$/).required(),
   });
@@ -219,16 +225,20 @@ application boot — per FR-016, Session 2026-06-21.)
   FK is on the `teachers` side (per FR-019). The relationship is non-nullable
   (a teacher must have a subject). Deleting or deactivating a `subjects` row
   that is referenced by a teacher is blocked at the DB level (per
-  `003-backend-api-db` FR-009b). The public API surface continues to expose
-  `teachers.subject` (the referenced subject's `name`), resolved via the FK
-  (per FR-020).
+  `003-backend-api-db` FR-009b). The public API surface exposes
+  `teachers.subject` as a nested `{ ulid, name }` object (per Clarifications,
+  Session 2026-06-20 (POST/GET reference object shape) and FR-020); the
+  `ulid` is the server-side lookup key resolved via `uq_subjects_ulid`, and
+  the `name` echoes the referenced subject's authoritative `name`.
 - **`teachers.id` ↔ `classes.form_teacher_id` (owned by Classes)**: The
   Classes-side schema defines `FOREIGN KEY (form_teacher_id) REFERENCES
   teachers(id)` (per FR-019) in the user-prepared MySQL container.
   In Stage 1 the API surface expresses the reference as
-  `classes.formTeacherEmail` (the teacher's `email`); the
-  `002-classes` feature's POST handler resolves the email to the teacher row
-  before insert and stores `form_teacher_id` (per `002-classes/data-model.md`).
+  `classes.formTeacher` (a nested `{ ulid, name }` object, per Clarifications,
+  Session 2026-06-20 (POST/GET reference object shape) and FR-020); the
+  `002-classes` feature's POST handler resolves `formTeacher.ulid` to
+  `teachers.id` via `uq_teachers_ulid` before insert and stores
+  `form_teacher_id` (per `002-classes/data-model.md`).
 - **`teachers.email` and `subjects.name`** are preserved as `UNIQUE NOT NULL`
   on the persistence side (per FR-018), even though they are no longer the
   primary keys. This keeps the natural-key identity for the public API.

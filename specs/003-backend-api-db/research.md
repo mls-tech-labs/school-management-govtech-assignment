@@ -79,7 +79,7 @@ file may add or override entries.
 | `POST` body validates, row inserted | `201 Created` | `{ ...entity }` | The `201` body is the entity, per `POST /api/v1.0/teachers` and `POST /api/v1.0/classes` examples in the assignment |
 | `GET` list returns (any number, including 0) | `200 OK` | `{ "data": [...] }` | Empty array is `200`, not `204` |
 | Body missing / malformed / fails Joi / fails extra-field policy | `400 Bad Request` | `{ "error": "..." }` | All `400`s share the envelope |
-| `POST /api/v1.0/classes` with unknown `teacherEmail` | `404 Not Found` | `{ "error": "Teacher not found" }` | Teachers-only — see below |
+| `POST /api/v1.0/classes` with unknown `formTeacher.ulid` | `404 Not Found` | `{ "error": "Teacher not found" }` | Teachers-only — see below; the wire format is a nested `{ ulid, name }` object per Clarifications, Session 2026-06-20 (POST/GET reference object shape) |
 | Duplicate email / duplicate class name / duplicate form teacher / unknown subject / unknown level | `409 Conflict` | `{ "error": "..." }` | All integrity violations share the envelope |
 | `Content-Type` is not `application/json` on a body-carrying request | `415 Unsupported Media Type` | `{ "error": "Content-Type must be application/json" }` | Enforced by `requireJson()` at the top of every body-carrying route handler |
 | Unhandled server failure | `500 Internal Server Error` | `{ "error": "Internal server error" }` | Stack traces NEVER leak; logger records them |
@@ -244,12 +244,12 @@ the last word (so direct writes that bypass the API are still rejected).
 
 | Invariant | DB-level mechanism | Application-level defence | Code path |
 |---|---|---|---|
-| Teacher email unique | `UNIQUE(teachers.email)` | `findTeacherByEmail` pre-INSERT check (for 404 vs 409 distinction) | `001-teachers` |
+| Teacher email unique | `UNIQUE(teachers.email)` | none — the typeORM `ER_DUP_ENTRY` is enough to render `409 "Email already in use"` | `001-teachers` |
 | Class name globally unique | `UNIQUE(classes.name)` | None (the 409 message is sufficient) | `002-classes` |
-| Form teacher unique (one form teacher per teacher) | `UNIQUE(classes.form_teacher_id)` | `findTeacherByEmail` pre-INSERT check resolves `teacherEmail` → `form_teacher_id` (for 404 vs 409 distinction) | `002-classes` |
-| Form teacher refers to existing teacher | `FK(classes.form_teacher_id → teachers.id)` | `findTeacherByEmail` pre-INSERT check (returns the `teachers.id` used as the FK value) | `002-classes` |
-| Teacher subject refers to active subject | `FK(teachers.subject_id → subjects.id)` | `buildCreateTeacherSchema()` Joi `valid(...activeSubjectNames)` resolves `subject` → `subject_id` via `findSubjectByName` | `001-teachers` |
-| Class level refers to active level | `FK(classes.level_id → levels.id)` | `buildCreateClassSchema()` Joi `valid(...activeLevelNames)` resolves `level` → `level_id` via `findLevelByName` | `002-classes` |
+| Form teacher unique (one form teacher per teacher) | `UNIQUE(classes.form_teacher_id)` | `findTeacherByUlid` pre-INSERT check resolves `formTeacher.ulid` → `form_teacher_id` via `uq_teachers_ulid` (for 404 vs 409 distinction) | `002-classes` |
+| Form teacher refers to existing teacher | `FK(classes.form_teacher_id → teachers.id)` | `findTeacherByUlid` pre-INSERT check (returns the `teachers.id` used as the FK value) | `002-classes` |
+| Teacher subject refers to active subject | `FK(teachers.subject_id → subjects.id)` | `buildCreateTeacherSchema()` Joi `valid(...activeSubjectUlids)` resolves `subject.ulid` → `subject_id` via `findSubjectByUlid` (against `uq_subjects_ulid`); the nested `subject.name` is a display hint and is ignored server-side (per Clarifications, Session 2026-06-20 (POST/GET reference object shape)) | `001-teachers` |
+| Class level refers to active level | `FK(classes.level_id → levels.id)` | `buildCreateClassSchema()` Joi `valid(...activeLevelUlids)` resolves `level.ulid` → `level_id` via `findLevelByUlid` (against `uq_levels_ulid`); the nested `level.name` is a display hint and is ignored server-side (per Clarifications, Session 2026-06-20 (POST/GET reference object shape)) | `002-classes` |
 | Subject / level referenced by live data cannot be removed or deactivated | Implicit in FK + `ON DELETE RESTRICT`; `active = true` is enforced by the application's "always read `WHERE active = true`" rule (deactivation is out of Stage 1 scope per FR-009b) | n/a | 003 |
 
 **Rationale**:
@@ -257,6 +257,16 @@ the last word (so direct writes that bypass the API are still rejected).
   explicit about "the data layer MUST enforce". Constitution Principle V
   (Simplicity) says the simplest defence that works is the right one —
   for relational data, that is the DB constraint.
+- The 2026-06-20 (POST/GET reference object shape) clarification
+  shifted the application-level lookup key from `name` / `email` to
+  `ulid` (per FR-021). The pre-INSERT checks for `subject`, `level`,
+  and `formTeacher` therefore resolve the nested `*.ulid` field via
+  the per-table `uq_*_ulid` UNIQUE index, not the natural-key column.
+  The natural-key resolution path (e.g. `findTeacherByEmail`) is
+  retired for Stage 1: every reference lookup is `ulid`-keyed, the
+  nested `*.name` field is treated as a client-supplied display hint
+  and ignored server-side, and the response echoes the authoritative
+  `name` from the referenced row.
 - `ON DELETE RESTRICT` is the default in MySQL. We do not commit to
   `CASCADE` or `SET NULL` because Stage 1 has no DELETE on teachers
   (per the Stage Scope). Future-stage DELETE on teachers would have to
@@ -300,8 +310,8 @@ into a clean status code; it is **not** the primary defence.
 |---|---|---|
 | Two concurrent `POST /api/v1.0/teachers` with the same email | `UNIQUE(teachers.email)` → `QueryFailedError` code `ER_DUP_ENTRY` (1062) on the second `INSERT` | none — the route handler maps the typeORM error to `409 "Email already in use"` |
 | Two concurrent `POST /api/v1.0/classes` with the same `name` | `UNIQUE(classes.name)` → `ER_DUP_ENTRY` on the second `INSERT` | none |
-| 10 concurrent `POST /api/v1.0/classes` with the same `teacherEmail` (SC-007) | `UNIQUE(classes.form_teacher_id)` → 9 of 10 fail with `ER_DUP_ENTRY` (the route handler resolves `teacherEmail` → `form_teacher_id` so all 10 race past the pre-INSERT check and hit the DB constraint) | the pre-INSERT `findTeacherByEmail` only catches the existence-vs-duplicate distinction for the *first* request; the other 9 race past it and hit the DB constraint |
-| Two concurrent `POST /api/v1.0/classes` where the first deletes the referenced teacher before the second runs | `FK(classes.form_teacher_id → teachers.id)` → `QueryFailedError` code `ER_NO_REFERENCED_ROW_2` (1452) on the second `INSERT` | the pre-INSERT `findTeacherByEmail` catches the common case; the FK catches the race window |
+| 10 concurrent `POST /api/v1.0/classes` with the same `formTeacher.ulid` (SC-007) | `UNIQUE(classes.form_teacher_id)` → 9 of 10 fail with `ER_DUP_ENTRY` (the route handler resolves `formTeacher.ulid` → `form_teacher_id` via `uq_teachers_ulid` so all 10 race past the pre-INSERT check and hit the DB constraint) | the pre-INSERT `findTeacherByUlid` only catches the existence-vs-duplicate distinction for the *first* request; the other 9 race past it and hit the DB constraint |
+| Two concurrent `POST /api/v1.0/classes` where the first deletes the referenced teacher before the second runs | `FK(classes.form_teacher_id → teachers.id)` → `QueryFailedError` code `ER_NO_REFERENCED_ROW_2` (1452) on the second `INSERT` | the pre-INSERT `findTeacherByUlid` catches the common case; the FK catches the race window |
 
 **Rationale**:
 - The 003 spec SC-007 is explicit: "Under a load of 10 concurrent

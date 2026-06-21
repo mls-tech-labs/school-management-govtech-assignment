@@ -7,13 +7,19 @@ info:
     Part of Stage 1 — Create + Read only.
 
     The Classes feature consumes the `teachers` reference via the
-    `teacherEmail` request field (the form teacher's email). It is built
-    on top of `001-teachers` (the `teachers` table must exist) and the
-    shared cross-cutting contract defined in `003-backend-api-db/spec.md`
-    (status codes, error envelope, 415 / 503 behaviour, version prefix
-    `/api/v1.0/`). The MySQL schema is user-prepared (per
-    `003-backend-api-db/spec.md` FR-016); the application is read/write
-    at runtime only.
+    `formTeacher.ulid` request field (the form teacher's ULID — the
+    server-side lookup key resolved against `uq_teachers_ulid`). It is
+    built on top of `001-teachers` (the `teachers` table must exist)
+    and the shared cross-cutting contract defined in
+    `003-backend-api-db/spec.md` (status codes, error envelope,
+    415 / 503 behaviour, version prefix `/api/v1.0/`). The MySQL schema
+    is user-prepared (per `003-backend-api-db/spec.md` FR-016); the
+    application is read/write at runtime only.
+
+    Reference fields on the wire are nested `{ ulid, name }` objects on
+    both POST and GET (per `003-backend-api-db/spec.md` Clarifications,
+    Session 2026-06-20 (POST/GET reference object shape)): `level` and
+    `formTeacher` are both nested objects.
 
     Stage 1 deliberately does NOT expose the `id` column (the surrogate
     primary key is reserved for a future edit/delete endpoint); see
@@ -42,14 +48,20 @@ paths:
       summary: List all classes
       description: |
         Returns the full list of registered classes, joined with the
-        form-teacher's `name`. No pagination in Stage 1. Stage 1 upper
+        form-teacher. No pagination in Stage 1. Stage 1 upper
         bound: ≤ 500 classes
         (see `002-classes/spec.md` Clarifications, Session 2026-06-18).
 
         Response shape per entry:
-        `{ "ulid": string, "level": string, "name": string, "formTeacher": { "name": string } }`.
-        The `id` column is intentionally **not** in the response. The
-        `ulid` is the frontend-stable row handle (per FR-021).
+        `{ ulid, level: { ulid, name }, name, formTeacher: { ulid, name } }`.
+        The top-level `ulid` and the nested `ulid` fields on `level` and
+        `formTeacher` are the 26-character Crockford Base32
+        frontend-stable row handles (per FR-021, owned by
+        `003-backend-api-db`). Reference fields are nested
+        `{ ulid, name }` objects on both POST and GET (per
+        `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-20 (POST/GET reference object shape)). The `id` column
+        is intentionally **not** in the response.
       operationId: listClasses
       responses:
         "200":
@@ -66,8 +78,8 @@ paths:
                   summary: Two classes
                   value:
                     data:
-                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA0", level: "Primary 1",   name: "Class 1A", formTeacher: { name: "Alice Tan" } }
-                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA1", level: "Primary 1",   name: "Class 1B", formTeacher: { name: "Bobby Lim" } }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA0", level: { ulid: "01H000000000000000000000B1", name: "Primary 1" }, name: "Class 1A", formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R", name: "Alice Tan" } }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA1", level: { ulid: "01H000000000000000000000B1", name: "Primary 1" }, name: "Class 1B", formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7S", name: "Bobby Lim" } }
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
         "500":
@@ -79,12 +91,24 @@ paths:
       tags: [classes]
       summary: Create a new class
       description: |
-        Validates the request body with Joi against the active `levels`
-        list and the standard email format. Performs a pre-INSERT
-        existence check against the `teachers` table to distinguish
-        `404 "Teacher not found"` from `409 "Teacher already assigned"`,
-        then inserts the row. Race-safe via the `UNIQUE` indexes on
-        `classes.name` and `classes.form_teacher_id`.
+        Validates the request body with Joi. The nested `level.ulid`
+        is resolved against the active `levels` list (via
+        `uq_levels_ulid`); unknown / inactive values are rejected
+        with `400 Bad Request` + `{ "error": "level must be one of
+        [Primary 1, Primary 2, ..., Secondary 4]" }`. The nested
+        `formTeacher.ulid` is resolved against the `teachers` table
+        (via `uq_teachers_ulid`) — unknown values are rejected with
+        `404 Not Found` + `{ "error": "Teacher not found" }`. The
+        nested `name` fields on the request body are display hints
+        and are NOT validated against the rows identified by `ulid`
+        (per `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-20 (POST/GET reference object shape)). Performs a
+        pre-INSERT existence check to distinguish `404 "Teacher not
+        found"` from `409 "Teacher already assigned"`, then inserts
+        the row. Race-safe via the `UNIQUE` indexes on `classes.name`
+        and `classes.form_teacher_id`. Any top-level `ulid` field in
+        the request body is ignored (`additionalProperties: false` on
+        the Joi schema rejects unknown top-level fields).
       operationId: createClass
       requestBody:
         required: true
@@ -95,9 +119,13 @@ paths:
             examples:
               valid:
                 value:
-                  level: "Primary 1"
+                  level:
+                    ulid: "01H000000000000000000000B1"
+                    name: "Primary 1"
                   name: "Class 1A"
-                  teacherEmail: "alice@example.com"
+                  formTeacher:
+                    ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R"
+                    name: "Alice Tan"
       responses:
         "201":
           description: Class created
@@ -107,13 +135,17 @@ paths:
                 $ref: "#/components/schemas/Class"
               example:
                 ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA0"
-                level: "Primary 1"
+                level:
+                  ulid: "01H000000000000000000000B1"
+                  name: "Primary 1"
                 name: "Class 1A"
-                formTeacher: { name: "Alice Tan" }
+                formTeacher:
+                  ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R"
+                  name: "Alice Tan"
         "400":
           description: |
-            Validation error (missing field, invalid email format,
-            unknown/inactive `level`).
+            Validation error (missing field, unknown/inactive
+            `level.ulid`).
           content:
             application/json:
               schema:
@@ -121,16 +153,16 @@ paths:
               examples:
                 missingName:
                   value: { "error": "name is required" }
-                invalidEmail:
-                  value: { "error": "teacherEmail must be a valid email" }
+                missingFormTeacherUlid:
+                  value: { "error": "formTeacher.ulid is required" }
                 unknownLevel:
                   value: { "error": "level must be one of [Primary 1, Primary 2, ..., Secondary 4]" }
         "404":
           description: |
-            `teacherEmail` does not match any registered teacher
-            (covers the race where a teacher is deleted between page load
-            and submit — see `002-classes/spec.md` Clarifications,
-            Session 2026-06-18, Q2).
+            `formTeacher.ulid` does not match any registered teacher
+            (covers the race where a teacher is deleted between page
+            load and submit). Per
+            `003-backend-api-db/spec.md` FR-013.
           content:
             application/json:
               schema:
@@ -142,11 +174,11 @@ paths:
           description: |
             Either the class `name` is already in use
             (`UNIQUE(classes.name)` violation), the teacher identified
-            by `teacherEmail` is already the form teacher of another
-            class (`UNIQUE(classes.form_teacher_id)` violation), or
-            (astronomically rarely) the server-generated `ulid`
-            collides (`UNIQUE(classes.ulid)` violation — per FR-021).
-            All three are race-safe by construction.
+            by `formTeacher.ulid` is already the form teacher of
+            another class (`UNIQUE(classes.form_teacher_id)`
+            violation), or (astronomically rarely) the server-generated
+            `ulid` collides (`UNIQUE(classes.ulid)` violation — per
+            FR-021). All three are race-safe by construction.
           content:
             application/json:
               schema:
@@ -170,7 +202,9 @@ components:
       description: |
         The Stage 1 wire shape of a class. The surrogate `id` column is
         deliberately omitted; it lives in the DB but is not returned to
-        the client.
+        the client. Reference fields are nested `{ ulid, name }` objects
+        per `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-20 (POST/GET reference object shape).
       required: [ulid, level, name, formTeacher]
       properties:
         ulid:
@@ -185,10 +219,26 @@ components:
             as the React/Ant Design `Table` row key and as the route
             parameter for future Update/Delete endpoints.
         level:
-          type: string
-          minLength: 1
-          maxLength: 64
-          description: Active entry from the `levels` reference list (e.g., "Primary 1").
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced level (the server-side lookup
+                key — matched against `uq_levels_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Display name of the referenced level (e.g.,
+                "Primary 1"). Echoes the authoritative `name` from the
+                `levels` row; on POST it is a display hint and is NOT
+                validated against the row identified by `ulid`.
         name:
           type: string
           minLength: 1
@@ -196,37 +246,86 @@ components:
           description: Class display name (e.g., "Class 1A"). Globally unique.
         formTeacher:
           type: object
-          required: [name]
+          required: [ulid, name]
           properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the form teacher (the server-side lookup key
+                — matched against `uq_teachers_ulid`).
             name:
               type: string
               minLength: 1
               maxLength: 255
-              description: Form teacher's display name, resolved server-side via the JOIN against `teachers`.
+              description: |
+                Form teacher's display name, resolved server-side via
+                the JOIN against `teachers`. Echoes the authoritative
+                `name` from the referenced teacher row; on POST it is
+                a display hint and is NOT validated against the row
+                identified by `ulid`.
 
     CreateClassRequest:
       type: object
-      required: [level, name, teacherEmail]
+      required: [level, name, formTeacher]
       additionalProperties: false
       properties:
         level:
-          type: string
-          minLength: 1
-          maxLength: 64
-          description: Must match an active entry in the `levels` reference list.
+          type: object
+          required: [ulid]
+          additionalProperties: false
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced level. Must match an active
+                entry in the `levels` reference list (looked up via
+                `uq_levels_ulid`). Per
+                `003-backend-api-db/spec.md` Clarifications, Session
+                2026-06-20 (POST/GET reference object shape).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Optional display name of the referenced level.
+                Ignored server-side — the lookup is `ulid`-only.
         name:
           type: string
           minLength: 1
           maxLength: 255
-        teacherEmail:
-          type: string
-          format: email
-          maxLength: 254
-          description: |
-            The form teacher's email. Must match an existing teacher. The
-            dropdown on the Add Class form submits the selected
-            teacher's email here (see `002-classes/spec.md`
-            Clarifications, Session 2026-06-18, Q2).
+        formTeacher:
+          type: object
+          required: [ulid]
+          additionalProperties: false
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the form teacher. Must match an existing
+                teacher (looked up via `uq_teachers_ulid`). The
+                dropdown on the Add Class form submits the selected
+                teacher's `ulid` here (per
+                `003-backend-api-db/spec.md` Clarifications, Session
+                2026-06-20 (POST/GET reference object shape) and
+                `002-classes/spec.md` Clarifications, Session
+                2026-06-18, Q2).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+              description: |
+                Optional display name of the form teacher. Ignored
+                server-side — the lookup is `ulid`-only. Sent for
+                round-trip consistency with the GET response shape.
 
     ClassListResponse:
       type: object

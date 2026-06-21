@@ -57,6 +57,19 @@ all exposed under the version prefix `/api/v1.0/` (per FR-022,
 owned by `003-backend-api-db`; see
 [research.md §3.12](./research.md#312-api-version-prefix-fr-022)).
 
+The 2026-06-20 (POST/GET reference object shape) clarification
+folded the previously-flat `subject` / `level` / `formTeacher`
+reference fields into nested `{ ulid, name }` objects on the public
+API surface (see `spec.md` Clarifications,
+Session 2026-06-20 (POST/GET reference object shape); FR-004, FR-005,
+FR-020). The cross-cutting plan absorbs this by replacing the
+`findTeacherByEmail` pre-INSERT check that 002 previously used with
+a `findTeacherByUlid` lookup against `uq_teachers_ulid`; the same
+`ulid`-keyed lookup pattern is applied to `subject.ulid` (`uq_subjects_ulid`)
+and `level.ulid` (`uq_levels_ulid`). The `name` field on each
+nested reference object is a display hint and is ignored
+server-side.
+
 ## Technical Context
 
 **Language/Version**: TypeScript 5.x with `strict: true` (per Constitution Principle II). No `.js` source files.

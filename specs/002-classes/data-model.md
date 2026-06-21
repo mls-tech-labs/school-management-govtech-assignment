@@ -116,9 +116,9 @@ application boot — per FR-016, Session 2026-06-21.)
 |---|---|---|---|---|---|
 | `id` | `BIGINT UNSIGNED` (auto-increment) | yes (auto) | yes (PK) | n/a (server-generated, not in request body) | Surrogate primary key. Not exposed in the Stage 1 API response (see spec Clarifications, Session 2026-06-18, Q5); the column exists so a future edit/delete endpoint can route by id without a migration. |
 | `ulid` | `CHAR(26)` | yes | yes (`UNIQUE` via `uq_classes_ulid`) | — | 26-character Crockford Base32 ULID. Generated server-side on insert by the `ulid` npm package via `lib/ulid.ts` (per FR-021 — Session 2026-06-20 ULID clarification). The frontend-stable row handle; exposed in every Stage 1 POST 201 body and every entry in the GET 200 list. NOT a FK target. |
-| `level_id` | `BIGINT UNSIGNED` | yes | FK | `Joi.string().valid(...activeLevelNames).required()` (validated as `level` name) | Foreign key to `levels.id` (per `003-backend-api-db/spec.md` FR-019). The Joi schema validates the public-API field `level` (which carries the referenced level's `name`), not the internal FK id. |
+| `level_id` | `BIGINT UNSIGNED` | yes | FK | `Joi.object({ ulid: Joi.string().length(26).required(), name: Joi.string().max(64).optional() }).required()` (mapped via `level.ulid`) | Foreign key to `levels.id` (per `003-backend-api-db/spec.md` FR-019). The Joi schema validates the nested `level.ulid` (the server-side lookup key, resolved against `uq_levels_ulid`); the nested `level.name` is a display hint and is ignored server-side (per Clarifications, Session 2026-06-20 (POST/GET reference object shape)). |
 | `name` | `VARCHAR(255)` | yes | yes (`UNIQUE NOT NULL`) | `Joi.string().trim().min(1).max(255).required()` | Display name (e.g., "Class 1A"). Global uniqueness enforced by `UNIQUE KEY uq_classes_name` (see `FR-005c` and the spec Clarifications, Session 2026-06-18, Q3). The natural-key status is preserved even though `id` is the surrogate PK (per FR-018). |
-| `form_teacher_id` | `BIGINT UNSIGNED` | yes | yes (`UNIQUE`) | `Joi.string().email({ tlds: false }).trim().lowercase().max(254).required()` (validated as `teacherEmail`) | Foreign key to `teachers.id` (per FR-019). `UNIQUE` enforces the "at most one class per teacher" invariant (`FR-005`). The wire field is `teacherEmail`; the route handler resolves it to `form_teacher_id` via a `findTeacherByEmail` lookup before insert. |
+| `form_teacher_id` | `BIGINT UNSIGNED` | yes | yes (`UNIQUE`) | `Joi.object({ ulid: Joi.string().length(26).required(), name: Joi.string().max(64).optional() }).required()` (mapped via `formTeacher.ulid`) | Foreign key to `teachers.id` (per FR-019). `UNIQUE` enforces the "at most one class per teacher" invariant (`FR-005`). The wire field is `formTeacher` (a nested `{ ulid, name }` object, per Clarifications, Session 2026-06-20 (POST/GET reference object shape)); the route handler resolves `formTeacher.ulid` to `form_teacher_id` via a `findTeacherByUlid` lookup against `uq_teachers_ulid` before insert. The nested `formTeacher.name` is a display hint and is ignored server-side. |
 | `created_at` | `DATETIME(6)` | yes (default) | no | — | `DEFAULT CURRENT_TIMESTAMP(6)` (per FR-018). typeORM `@CreateDateColumn`. |
 | `created_by` | `VARCHAR(64)` | yes (default `'system'`) | no | — | Actor identifier (per FR-018). |
 | `modified_at` | `DATETIME(6)` | yes (default) | no | — | `ON UPDATE CURRENT_TIMESTAMP(6)` (per FR-018). typeORM `@UpdateDateColumn`. |
@@ -132,8 +132,10 @@ application boot — per FR-016, Session 2026-06-21.)
   `001-teachers`).
 - `FOREIGN KEY (form_teacher_id) REFERENCES teachers(id)` —
   cross-feature referential integrity for the form teacher. The FK is the
-  last line of defence behind the pre-INSERT `findTeacherByEmail` lookup
-  (see [research.md §2.2](./research.md#22-form-teacher-lookup-in-post-apiclasses)
+  last line of defence behind the pre-INSERT `findTeacherByUlid` lookup
+  (keyed on `formTeacher.ulid` against `uq_teachers_ulid`, per
+  Clarifications, Session 2026-06-20 (POST/GET reference object shape);
+  see [research.md §2.2](./research.md#22-form-teacher-lookup-in-post-apiclasses)
   and [research.md §2.3](./research.md#23-classesform_teacher_id--foreign-key-vs-application-level-reference)).
 - `UNIQUE KEY uq_classes_name (name)` — race-safe enforcement of
   `FR-005c` (class name uniqueness).
@@ -213,21 +215,35 @@ export class Class {
 ```
 
 **Joi schema (sketch)** — the schema is generated at app boot from the active
-`levels` rows so it stays in lockstep with the DB. The Joi schema mirrors the
-**public API** surface (`level` and `teacherEmail` natural-key field names),
-not the persistence FK ids:
+`levels` and `teachers` rows so it stays in lockstep with the DB. The Joi
+schema mirrors the **public API** surface (`level` and `formTeacher` nested
+`{ ulid, name }` reference objects, per Clarifications, Session 2026-06-20
+(POST/GET reference object shape)), not the persistence FK ids:
 
 ```ts
 // lib/validation/class.ts
 import Joi from "joi";
-import { getActiveLevelNames } from "../db/repositories/level-repo";
+import { getActiveLevelUlids } from "../db/repositories/level-repo";
+import { getActiveTeacherUlids } from "../db/repositories/teacher-repo";
 
 export async function buildCreateClassSchema() {
-  const levels = await getActiveLevelNames();
+  const activeLevelUlids = await getActiveLevelUlids();
+  const activeTeacherUlids = await getActiveTeacherUlids();
   return Joi.object({
-    level: Joi.string().valid(...levels).required(),
+    // Per Clarifications, Session 2026-06-20 (POST/GET reference object shape):
+    //   level.ulid is the server-side lookup key (validated against uq_levels_ulid);
+    //   level.name is a display hint and is ignored server-side.
+    level: Joi.object({
+      ulid: Joi.string().length(26).valid(...activeLevelUlids).required(),
+      name: Joi.string().min(1).max(64).optional(),
+    }).required(),
     name: Joi.string().trim().min(1).max(255).required(),
-    teacherEmail: Joi.string().email({ tlds: false }).trim().lowercase().max(254).required(),
+    // formTeacher: same nested { ulid, name } shape; resolved server-side
+    //   via findTeacherByUlid against uq_teachers_ulid.
+    formTeacher: Joi.object({
+      ulid: Joi.string().length(26).valid(...activeTeacherUlids).required(),
+      name: Joi.string().min(1).max(64).optional(),
+    }).required(),
   });
 }
 ```
@@ -246,20 +262,30 @@ export async function buildCreateClassSchema() {
   the form teacher — out of scope for v1; the class keeps the form teacher
   reference as it was at creation time"). See
   [research.md §2.3](./research.md#23-classesform_teacher_id--foreign-key-vs-application-level-reference).
-  The public API surface continues to expose `classes.formTeacher.name`
-  (resolved from the referenced teacher row), with the request body
-  field `teacherEmail` (per FR-020).
+  The public API surface exposes `classes.formTeacher` as a nested
+  `{ ulid, name }` object (per Clarifications, Session 2026-06-20
+  (POST/GET reference object shape) and FR-020); `formTeacher.ulid` is
+  the server-side lookup key resolved via `findTeacherByUlid` against
+  `uq_teachers_ulid`, and `formTeacher.name` echoes the referenced
+  teacher's authoritative `name`.
 - **`classes.level_id` → `levels.id`**. Many classes to one level. The
   relationship is non-nullable (every class has a level). Deleting or
   deactivating a `levels` row that is referenced by a class is blocked at
   the DB level (mirrors the `subjects` ↔ `teachers` relationship from
-  `001-teachers`). The public API surface continues to expose
-  `classes.level` (resolved to the referenced level's `name`).
+  `001-teachers`). The public API surface exposes `classes.level` as a
+  nested `{ ulid, name }` object (per Clarifications, Session 2026-06-20
+  (POST/GET reference object shape) and FR-020); `level.ulid` is the
+  server-side lookup key resolved via `findLevelByUlid` against
+  `uq_levels_ulid`, and `level.name` echoes the referenced level's
+  authoritative `name`.
 - **`classes.id` ↔ `classes.form_teacher_id`**: orthogonal. The
   surrogate `id` is the PK for typeORM; the form-teacher reference is
   the FK to the related `teachers` row. `id` is the route-handler target
-  for future endpoints, `formTeacher` (resolved via `form_teacher_id`)
-  is the user-facing identifier on the wire.
+  for future endpoints, `formTeacher` (a nested `{ ulid, name }` object,
+  per Clarifications, Session 2026-06-20 (POST/GET reference object shape);
+  `formTeacher.ulid` is the server-side lookup key resolved via
+  `findTeacherByUlid` against `uq_teachers_ulid`) is the user-facing
+  identifier on the wire.
 - **`classes.ulid`** (per FR-021): the cross-cutting frontend-stable row
   handle. NOT a FK target — every table has its own `ulid` column with
   `UNIQUE` enforcement, generated server-side by `lib/ulid.ts`. The
@@ -318,8 +344,10 @@ read from the same `WHERE active = true` query.
 - No `id` exposure in the Stage 1 API response — the surrogate id is
   hidden in `toJSON` (per the spec Clarifications, Session 2026-06-18,
   Q5). The DB column exists for future use; the wire shape remains
-  `{ "ulid", "level", "name", "formTeacher": { "name" } }` (the `ulid`
-  is exposed per FR-021).
+  `{ "ulid", "level": { "ulid", "name" }, "name", "formTeacher": { "ulid", "name" } }`
+  (per Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape) and FR-021 — the `ulid` row handle is exposed as the first
+  property of every entry).
 - No `ulid` acceptance from the client — the `ulid` column is
   server-generated by the `ulid` npm package via `lib/ulid.ts`. The Joi
   request body schema does not include a `ulid` field; clients receive

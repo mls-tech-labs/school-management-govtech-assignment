@@ -14,17 +14,21 @@ typeORM entities and repositories. The form-teacher relationship is
 enforced at the data layer by a foreign key from `classes.form_teacher_id`
 to `teachers.id` plus a `UNIQUE` index on `classes.form_teacher_id` (so
 the "at most one form teacher per teacher" invariant is race-safe by
-construction). The route handler resolves the wire-format `teacherEmail`
-(the referenced teacher's `email`) to `form_teacher_id` via a
-`findTeacherByEmail` lookup before insert; the FK and the `UNIQUE` index
-are the backstops for direct writes that bypass the API (per
-`003-backend-api-db/spec.md` FR-019 and `002-classes/spec.md` FR-013 —
-Session 2026-06-19 audit-columns clarification). The `levels` reference
-list is inserted by the user against the user-prepared MySQL container
-(per FR-016, Session 2026-06-21 — there is no typeORM migration set, no
-`npm run seed` step, and no boot-time seeder in Stage 1). All request
-bodies and query parameters are validated by Joi schemas that mirror
-the typeORM columns field-for-field (Principle VII). The whole stack
+construction). The route handler resolves the wire-format
+`formTeacher.ulid` (the referenced teacher's `ulid`, per the
+2026-06-20 (POST/GET reference object shape) clarification owned by
+`003-backend-api-db`) to `form_teacher_id` via a `findTeacherByUlid`
+lookup against `uq_teachers_ulid` before insert; the nested
+`formTeacher.name` is a display hint and is ignored server-side. The
+FK and the `UNIQUE` index are the backstops for direct writes that
+bypass the API (per `003-backend-api-db/spec.md` FR-019 and
+`002-classes/spec.md` FR-013 — Session 2026-06-19 audit-columns
+clarification). The `levels` reference list is inserted by the user
+against the user-prepared MySQL container (per FR-016, Session
+2026-06-21 — there is no typeORM migration set, no `npm run seed`
+step, and no boot-time seeder in Stage 1). All request bodies and
+query parameters are validated by Joi schemas that mirror the
+typeORM columns field-for-field (Principle VII). The whole stack
 (app + MySQL) runs in Docker via `docker compose up`, with the schema
 prepared by the user separately. All Stage 1 endpoints are exposed
 under the version prefix `/api/v1.0/` (per FR-022, Session 2026-06-21).
@@ -81,7 +85,7 @@ New integration tests:
 
 **Constraints**:
 - All `001-teachers` constraints apply (TS strict, no class-based code outside typeORM entities, Joi mirroring, etc.).
-- The form-teacher FK (`fk_classes_form_teacher`) and the `UNIQUE` constraint on `classes.form_teacher_id` are the single source of truth for FR-005 (one form teacher per teacher) and FR-004 (form teacher must exist). The wire-format `teacherEmail` is resolved to `form_teacher_id` by the route handler before insert; the FK + UNIQUE are the backstops for direct writes that bypass the API (per `003-backend-api-db/spec.md` FR-019 and FR-007).
+- The form-teacher FK (`fk_classes_form_teacher`) and the `UNIQUE` constraint on `classes.form_teacher_id` are the single source of truth for FR-005 (one form teacher per teacher) and FR-004 (form teacher must exist). The wire-format `formTeacher.ulid` (per Clarifications, Session 2026-06-20 (POST/GET reference object shape)) is resolved to `form_teacher_id` by the route handler via `findTeacherByUlid` against `uq_teachers_ulid` before insert; the nested `formTeacher.name` is ignored. The FK + UNIQUE are the backstops for direct writes that bypass the API (per `003-backend-api-db/spec.md` FR-019 and FR-007).
 - ≤ 500 classes in Stage 1 (Clarifications, Session 2026-06-18); no pagination.
 - The `levels` reference list is read-only in Stage 1; no POST / PUT / DELETE for it.
 - The Classes feature consumes `GET /api/v1.0/teachers` (the Form Teacher dropdown). If `001-teachers` is not yet implemented, the integration tests need a teacher fixture.
@@ -105,7 +109,7 @@ New integration tests:
 | IV. Single Role: Administrator | ✅ Pass | No auth, no roles; only the Administrator. |
 | V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. No DTOs, no class-based service layers, no DI container. The Classes feature reuses the same `FormField`, `Button`, `EmptyState`, `ErrorState`, `LoadingState` components from `001-teachers`. |
 | VI. Functional-First (Classes Only When Necessary) | ✅ Pass | Same rule as `001-teachers`: the new route handlers are small modules of pure functions; the new React components are function components with hooks; the only new classes are the typeORM entity classes (`Class`, `Level`). |
-| VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Class` mirrors the typeORM entity column-for-column. The form-teacher email format uses the same `Joi.string().email({ tlds: false })` pattern as `001-teachers`. The `ulid` column is server-generated (per FR-021) and is NOT part of any request body schema — it is never accepted from the client. |
+| VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Class` mirrors the typeORM entity column-for-column. The form-teacher reference is a nested `Joi.object({ ulid: Joi.string().length(26).required(), name: Joi.string().max(64).optional() }).required()` (per Clarifications, Session 2026-06-20 (POST/GET reference object shape); `formTeacher.ulid` is the server-side lookup key resolved via `findTeacherByUlid` against `uq_teachers_ulid`, `formTeacher.name` is a display hint and is ignored). The level reference follows the same nested pattern, resolved via `findLevelByUlid` against `uq_levels_ulid`. The `ulid` column is server-generated (per FR-021) and is NOT part of any request body schema — it is never accepted from the client. |
 | VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | The new components (`ClassForm`, `ClassTable`) are function components with explicit typed props. The shared `FormField`, `Button`, `StateViews` from `001-teachers` are reused — no feature-specific hard-coding. The Form Teacher control is a `Select` composed from the shared `FormField` and the existing **Ant Design (`antd`)** `Select` primitive, styled with **Tailwind CSS** utility classes (per Constitution v2.3.0). The `ulid` field (per FR-021) is displayed as a monospace string in any UI surface that needs the row handle (e.g., the row key for the Ant Design `Table`). |
 
 **Stage Scope compliance** (per Constitution → Stage Scope):
@@ -181,7 +185,7 @@ lib/
 ├── validation/
 │   ├── teacher.ts                                   # (pre-existing)
 │   ├── subject.ts                                   # (pre-existing)
-│   └── class.ts                                     # (+) buildCreateClassSchema() — Joi factory using active levels
+│   └── class.ts                                     # (+) buildCreateClassSchema() — Joi factory using active levels and active teachers; `level` and `formTeacher` are nested `{ ulid, name }` reference objects (per Clarifications, Session 2026-06-20 (POST/GET reference object shape); `*.ulid` is the server-side lookup key, `*.name` is ignored)
 ├── api/
 │   ├── response.ts                                  # (pre-existing) error envelope helpers
 │   ├── content-type.ts                              # (pre-existing) requireJson()
@@ -189,10 +193,10 @@ lib/
 │   └── db-error.ts                                  # (pre-existing from 003) typeORM QueryFailedError → status + message mapping
 ├── ulid.ts                                          # (pre-existing from 003-backend-api-db) generateUlid() — thin wrapper over the `ulid` npm package (per FR-021)
 ├── db/repositories/                                 # (+) pure-function helpers around the typeORM Repository
-│   ├── teacher.ts                                   # (+) getActiveSubjectNames, findTeacherByEmail, listTeachers
+│   ├── teacher.ts                                   # (+) getActiveTeacherUlids, findTeacherByUlid (resolves formTeacher.ulid → form_teacher_id via uq_teachers_ulid per Session 2026-06-20), listTeachers
 │   ├── subject.ts                                   # (+) listActiveSubjects
 │   ├── class.ts                                     # (+) createClass, listClassesWithFormTeacher, findClassByName
-│   └── level.ts                                     # (+) getActiveLevelNames, listActiveLevels
+│   └── level.ts                                     # (+) getActiveLevelUlids, listActiveLevels, findLevelByUlid (resolves level.ulid → level_id via uq_levels_ulid per Session 2026-06-20)
 └── config.ts                                        # (pre-existing)
 
 components/                                          # (pre-existing from 001-teachers)

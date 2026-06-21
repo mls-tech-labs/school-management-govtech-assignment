@@ -123,9 +123,9 @@ components:
     NotFound:
       description: |
         A referenced resource does not exist. In Stage 1, the only
-        404 path is `POST /api/v1.0/classes` with a `teacherEmail` that
-        does not match any registered teacher. Per
-        `003-backend-api-db/spec.md` FR-013.
+        404 path is `POST /api/v1.0/classes` with a
+        `formTeacher.ulid` that does not match any registered
+        teacher. Per `003-backend-api-db/spec.md` FR-013.
       content:
         application/json:
           schema:
@@ -137,8 +137,8 @@ components:
         A uniqueness or referential-integrity rule was violated. Per
         `003-backend-api-db/spec.md` FR-013. Three distinct cases:
         duplicate teacher email (`POST /api/v1.0/teachers`),
-        duplicate class `(name)` or duplicate form teacher
-        (`POST /api/v1.0/classes`).
+        duplicate class `name` (globally unique per FR-009) or
+        duplicate form teacher (`POST /api/v1.0/classes`).
       content:
         application/json:
           schema:

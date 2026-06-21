@@ -33,6 +33,11 @@
 - Q: Monotonic ULID (strictly sortable within a millisecond) vs plain random ULID? → A: Plain random ULID. Same-millisecond ordering is undefined; the trade-off is acceptable for Stage 1. A future-stage sync that requires deterministic same-ms merge ordering replaces this with `monotonicFactory()` from the same package (a single call-site change, no schema change).
 - Q: Scope — do the read-only reference tables (`subjects`, `levels`) also get `ulid`? → A: Yes — all four tables (`teachers`, `subjects`, `classes`, `levels`) carry `ulid CHAR(26) NOT NULL UNIQUE`. Matches the FR-018 audit-column precedent and the request wording ("every table defined in 001-teachers and 002-classes specs"); the frontend gets a stable handle on every row it ever receives, including the seeded reference values that today can only be identified by their mutable `name`. Asymmetry the other direction (add ULID later to two tables) is harder to reason about.
 
+### Session 2026-06-20 (POST/GET reference object shape)
+
+- Q: Reference fields (`subject` on POST teachers; `level` and `formTeacher` on POST classes) are currently flat strings on the wire; should they stay as strings, or become nested `{ ulid, name }` objects so the frontend can reuse the `ulid` it received from GET? → A: Wrap all three reference fields as nested `{ ulid, name }` objects in the POST request body. The `ulid` is the server-side lookup key (single indexed equality test against `uq_subjects_ulid` / `uq_levels_ulid` / `uq_teachers_ulid`); the `name` is a display hint, optional, and ignored server-side. A POST whose `ulid` matches an active record is accepted regardless of `name`; mismatched or missing `name` is NOT an error. This rule is owned by this spec (003) and propagated by reference to `001-teachers/spec.md`, `001-teachers/contracts/teachers.yaml`, `002-classes/spec.md`, and `002-classes/contracts/classes.yaml`.
+- Q: GET response shape — mirror the nested `{ ulid, name }` shape, keep the current flat strings, or over-fetch both? → A: Mirror the nested shape on GET responses. Teacher `subject` returns `{ ulid, name }`; class `level` returns `{ ulid, name }`; class `formTeacher` returns `{ ulid, name }` (the existing `name` field stays, `ulid` is added). Round-tripping is consistent (`request.subject` ≅ `response.subject`); the `ulid` is already exposed as the frontend-stable sync handle (per FR-021).
+
 ### Session 2026-06-21 (operational rules)
 
 - Q: Teacher `contactNumber` validation — keep the Singapore-mobile pattern (`^[89]\d{7}$`, exactly 8 digits, must start with `8` or `9`), relax it, or drop it entirely? → A: **Relax** the leading-digit rule. The teacher `contactNumber` MUST be exactly 8 digits, digits-only (`^\d{8}$`); no leading-digit restriction. The previous `^[89]\d{7}$` rule (Singapore-mobile assumption) is removed. This rule is owned by `001-teachers/spec.md` FR-004 and is mirrored here for completeness; both specs are updated.
@@ -119,10 +124,10 @@ and verifying that the operation is rejected with an error.
    **When** the system is asked to create a new class with the same
    teacher as its form teacher, **Then** the request is rejected with an
    integrity-error status code and a meaningful error message.
-3. **Given** no teacher exists with `email = "nobody@example.com"`,
+3. **Given** no teacher exists with `ulid = "01H00000000000000000000000"` (i.e., no teacher row whose `uq_teachers_ulid` matches),
    **When** the system is asked to create a class with
-   `teacherEmail = "nobody@example.com"`, **Then** the request is
-   rejected with a not-found status code and a meaningful error message.
+   `formTeacher = { ulid: "01H00000000000000000000000", name: "Nobody" }`, **Then** the request is
+   rejected with a not-found status code (`404 Not Found`) and a meaningful error message (`{ "error": "Teacher not found" }`).
 4. **Given** a class "Class 1A" already exists at level "Primary 1",
    **When** the system is asked to create another class with the same
    `level` and `name` pair, **Then** the request is rejected with an
@@ -198,9 +203,16 @@ code mapping.
   and documented in the API contract.
 - What happens when an integrity violation is detected (duplicate
   email, duplicate form teacher, missing teacher, duplicate class
-  `name`, unknown subject, unknown level)? — The endpoint MUST map
-  the violation to the agreed status code (see FR-009, FR-009a) and a
-  meaningful error message.
+  `name`, unknown `subject.ulid`, unknown `level.ulid`)? — The
+  endpoint MUST map the violation to the agreed status code (see
+  FR-009, FR-009a) and a meaningful error message.
+- What happens when the request body carries a reference object whose
+  nested `name` field does not match the row identified by its
+  `ulid` (e.g., `subject: { ulid: "01H...", name: "Wrong Label" }`)? —
+  The server ignores `name`; only `ulid` is consulted for the lookup
+  (per Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape)). The response echoes the authoritative `name` from the
+  referenced row, not the client-supplied value.
 - What happens when a list endpoint is called while the data store is
   briefly unavailable? — The endpoint MUST respond with `503 Service
   Unavailable` and the agreed error envelope, and the frontend MUST
@@ -236,11 +248,13 @@ code mapping.
   of which uses the Stage 1 version prefix `/api/v1.0/` (per FR-022):
   - `POST /api/v1.0/teachers` — create a teacher; success returns HTTP
     `201 Created` with a body containing the newly-created teacher's
-    `ulid` (per FR-021) and natural-key fields.
+    `ulid` (per FR-021), `name`, `subject` (nested `{ ulid, name }`
+    per FR-020 and Clarifications, Session 2026-06-20 (POST/GET
+    reference object shape)), `email`, and `contactNumber`.
   - `GET /api/v1.0/teachers` — list all teachers; success returns HTTP
     `200 OK` with `{ "data": [ ...teachers ] }`, each entry carrying
-    `name`, `subject`, `email`, `contactNumber`, and `ulid` (per
-    FR-021).
+    `ulid` (per FR-021), `name`, `subject` (nested `{ ulid, name }`
+    per FR-020), `email`, and `contactNumber`.
   - `GET /api/v1.0/subjects` — list all active subjects; success
     returns HTTP `200 OK` with `{ "data": [ { "name", "active",
     "ulid" } ] }`, filtered to entries where `active = true`. (See
@@ -252,10 +266,14 @@ code mapping.
   of which uses the Stage 1 version prefix `/api/v1.0/` (per FR-022):
   - `POST /api/v1.0/classes` — create a class; success returns HTTP
     `201 Created` with a body containing the newly-created class's
-    `ulid` (per FR-021) and natural-key fields.
+    `ulid` (per FR-021), `name`, `level` (nested `{ ulid, name }`
+    per FR-020 and Clarifications, Session 2026-06-20 (POST/GET
+    reference object shape)), and `formTeacher` (nested
+    `{ ulid, name }`).
   - `GET /api/v1.0/classes` — list all classes; success returns HTTP
     `200 OK` with `{ "data": [ ...classes ] }`. Each entry includes
-    `level`, `name`, `formTeacher.name`, and `ulid` (per FR-021).
+    `ulid` (per FR-021), `name`, `level` (nested `{ ulid, name }`),
+    and `formTeacher` (nested `{ ulid, name }`).
   - `GET /api/v1.0/levels` — list all active levels; success returns
     HTTP `200 OK` with `{ "data": [ { "name", "active", "ulid" } ] }`,
     filtered to entries where `active = true`. (See Clarifications,
@@ -264,12 +282,22 @@ code mapping.
 - **FR-004**: The system MUST store the following attributes for each
   **teacher** record, with the constraints listed:
   - `name` (string, required, non-empty).
-  - `subject` (string on the public API surface, required, non-empty;
-    persisted as `teachers.subject_id` — a foreign key → `subjects.id`
-    referencing an active entry in the `subjects` reference list; see
-    Clarifications, Session 2026-06-18 and FR-019). The Joi schema
-    validates the natural-key value submitted on the wire; the route
-    handler resolves it to the referenced `subjects.id` before insert.
+  - `subject` (**nested object** on the public API surface, required —
+    see Clarifications, Session 2026-06-20 (POST/GET reference object
+    shape); the wire shape is `{ ulid: string, name?: string }`):
+    - `ulid` (string, required, exactly 26 characters, Crockford
+      Base32 — the server-side lookup key, resolved against
+      `uq_subjects_ulid`).
+    - `name` (string, optional on the request; display hint, ignored
+      server-side; on the response, echoes the referenced subject's
+      authoritative `name`).
+    Persisted as `teachers.subject_id` — a foreign key → `subjects.id`
+    referencing an active entry in the `subjects` reference list (see
+    FR-019). The route handler resolves the submitted `subject.ulid`
+    to `subjects.id` before insert; the `subject.name` value is NOT
+    validated against the referenced row. An unknown or inactive
+    `subject.ulid` is rejected with `400 Bad Request` +
+    `{ "error": "Invalid subject" }` per FR-013.
   - `email` (string, required, must be a syntactically valid email
     address, **unique across all teacher records**).
   - `contactNumber` (string, required, exactly 8 digits, digits-only;
@@ -277,19 +305,44 @@ code mapping.
     `001-teachers/spec.md` Clarifications, Session 2026-06-21).
 - **FR-005**: The system MUST store the following attributes for each
   **class** record, with the constraints listed:
-  - `level` (string on the public API surface, required, non-empty;
-    persisted as `classes.level_id` — a foreign key → `levels.id`
-    referencing an active entry in the `levels` reference list; see
-    Clarifications, Session 2026-06-18 and FR-019).
+  - `level` (**nested object** on the public API surface, required —
+    see Clarifications, Session 2026-06-20 (POST/GET reference object
+    shape); the wire shape is `{ ulid: string, name?: string }`):
+    - `ulid` (string, required, exactly 26 characters, Crockford
+      Base32 — the server-side lookup key, resolved against
+      `uq_levels_ulid`).
+    - `name` (string, optional on the request; display hint, ignored
+      server-side; on the response, echoes the referenced level's
+      authoritative `name`).
+    Persisted as `classes.level_id` — a foreign key → `levels.id`
+    referencing an active entry in the `levels` reference list (see
+    FR-019). The route handler resolves the submitted `level.ulid`
+    to `levels.id` before insert; the `level.name` value is NOT
+    validated against the referenced row. An unknown or inactive
+    `level.ulid` is rejected with `400 Bad Request` +
+    `{ "error": "Invalid level" }` per FR-013.
   - `name` (string, required, non-empty, **unique across all class
     records** — class names are globally unique; see
     `002-classes/spec.md` Clarifications, Session 2026-06-18).
-  - `formTeacherEmail` (string on the public API surface, required,
-    must be a syntactically valid email address; persisted as
-    `classes.form_teacher_id` — a foreign key → `teachers.id`
-    resolving to the referenced teacher row, see FR-019). The
-    `form_teacher_id` column carries a `UNIQUE` constraint so a
-    teacher can be the form teacher of at most one class.
+  - `formTeacher` (**nested object** on the public API surface,
+    required — see Clarifications, Session 2026-06-20 (POST/GET
+    reference object shape); the wire shape is
+    `{ ulid: string, name?: string }`):
+    - `ulid` (string, required, exactly 26 characters, Crockford
+      Base32 — the server-side lookup key, resolved against
+      `uq_teachers_ulid`).
+    - `name` (string, optional on the request; display hint, ignored
+      server-side; on the response, echoes the referenced teacher's
+      authoritative `name`).
+    Persisted as `classes.form_teacher_id` — a foreign key →
+    `teachers.id` resolving to the referenced teacher row (see FR-019).
+    The `form_teacher_id` column carries a `UNIQUE` constraint so a
+    teacher can be the form teacher of at most one class. The route
+    handler resolves the submitted `formTeacher.ulid` to `teachers.id`
+    before insert; the `formTeacher.name` value is NOT validated
+    against the referenced row. A `formTeacher.ulid` that does not
+    match any active teacher is rejected with `404 Not Found` +
+    `{ "error": "Teacher not found" }` per FR-013.
 - **FR-018**: Every table in the data store (`subjects`, `teachers`,
   `levels`, `classes`) MUST carry the following six audit columns in
   addition to its domain columns (see Clarifications,
@@ -320,16 +373,22 @@ code mapping.
   `ON UPDATE CASCADE ON DELETE RESTRICT` to match the existing
   referential-integrity semantics documented in FR-009a.
 - **FR-020**: The Stage 1 public API responses MUST keep using the
-  domain-natural identifier names (`teachers.email`, `subjects.name`,
-  `levels.name`, `classes.name`, `classes.formTeacher.email`) so the
-  consumer contract is unchanged by the persistence-side PK
-  migration. The `id`, `created_at`, `created_by`, `modified_at`,
-  `modified_by`, and `version` columns are **not** exposed in the
-  Stage 1 API responses; they are persistence-side audit metadata
-  available only to internal code. The **`ulid` column is the
-  explicit exception** (per FR-021): it IS exposed in every Stage 1
-  GET response and every POST 201 confirmation body as the
-  frontend-stable sync handle.
+  domain-natural identifier names on the `name` fields (`subjects.name`,
+  `levels.name`, `classes.name`, the teacher name resolved from
+  `form_teacher_id` and surfaced via `formTeacher.name`) so the
+  consumer contract remains stable. Reference fields on the public API
+  surface are **nested objects** of shape `{ ulid, name }` (see
+  Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape)) on both POST and GET: teachers expose `subject` as
+  `{ ulid, name }`; classes expose `level` as `{ ulid, name }` and
+  `formTeacher` as `{ ulid, name }`. The `id`, `created_at`,
+  `created_by`, `modified_at`, `modified_by`, and `version` columns
+  are **not** exposed in the Stage 1 API responses; they are
+  persistence-side audit metadata available only to internal code. The
+  **`ulid` column is the explicit exception** (per FR-021): it IS
+  exposed in every Stage 1 GET response (top-level on each record, and
+  on the nested reference objects) and every POST 201 confirmation
+  body as the frontend-stable sync handle.
 - **FR-021**: Every table in the data store (`subjects`, `teachers`,
   `levels`, `classes`) MUST carry a `ulid` column in addition to its
   audit and domain columns (see Clarifications, Session 2026-06-20):
@@ -361,14 +420,14 @@ code mapping.
 - **FR-006**: The system MUST enforce `email` uniqueness on the
   `teachers` data at the data layer, so that even direct writes that
   bypass the API cannot create two teachers with the same email.
-- **FR-007**: The system MUST enforce that a `class.formTeacherEmail`
-  (resolved at the data layer to `classes.form_teacher_id`) refers to
-  an existing `teachers.id` (referential integrity), so that a class
-  cannot exist without a corresponding teacher record. The
-  application-level defence is the `findTeacherByEmail` lookup before
-  insert (per FR-020); the FK `fk_classes_form_teacher` is the
-  backstop (per FR-019).
-- **FR-008**: The system MUST enforce `formTeacherEmail` uniqueness on
+- **FR-007**: The system MUST enforce that a `class.formTeacher.ulid`
+  (resolved at the data layer to `classes.form_teacher_id` via
+  `uq_teachers_ulid`) refers to an existing `teachers.id`
+  (referential integrity), so that a class cannot exist without a
+  corresponding teacher record. The application-level defence is the
+  `findTeacherByUlid` lookup before insert (per FR-020); the FK
+  `fk_classes_form_teacher` is the backstop (per FR-019).
+- **FR-008**: The system MUST enforce `formTeacher.ulid` uniqueness on
   the `classes` data at the data layer, so that even direct writes
   that bypass the API cannot assign the same teacher as the form
   teacher of two different classes.
@@ -381,11 +440,13 @@ code mapping.
   `teachers.subject_id` and `subjects.id`, and between
   `classes.level_id` and `levels.id` (per FR-019), so that a teacher
   or class cannot reference a non-existent reference-list entry. The
-  natural-key API fields (`teachers.subject`, `classes.level`) are
-  resolved to the FK id by the route handler before insert; the FK
-  constraints (`fk_teachers_subject`, `fk_classes_level`) are the
-  backstop for direct writes that bypass the API (see Clarifications,
-  Session 2026-06-18).
+  nested API fields (`subject.ulid`, `level.ulid`) are resolved to
+  the FK id by the route handler via `uq_subjects_ulid` /
+  `uq_levels_ulid` before insert (per Clarifications, Session
+  2026-06-20 (POST/GET reference object shape)); the FK constraints
+  (`fk_teachers_subject`, `fk_classes_level`) are the backstop for
+  direct writes that bypass the API (see Clarifications, Session
+  2026-06-18).
 - **FR-009b**: The system MUST enforce that a `subject` or `level`
   referenced by an existing teacher or class cannot be removed or
   marked inactive; reference-list entries referenced by live data
@@ -407,15 +468,16 @@ code mapping.
   the following HTTP status codes:
   - `400 Bad Request` — request body is missing, malformed, or fails
     field-level validation (e.g., invalid email format, invalid contact
-    number, missing required field).
-  - `404 Not Found` — a referenced teacher (`teacherEmail`) does not
-    exist when creating a class.
+    number, missing required field, unknown `subject.ulid`, unknown
+    `level.ulid`).
+  - `404 Not Found` — a referenced teacher (`formTeacher.ulid`) does
+    not exist when creating a class.
   - `409 Conflict` — a uniqueness or referential-integrity rule is
     violated: duplicate teacher email, duplicate form teacher,
-    duplicate `(level, name)` pair on a class, or a duplicate `ulid`
-    (theoretical ULID collision caught by the per-table `UNIQUE`
-    index per FR-021; vanishingly rare in practice but covered for
-    defense-in-depth).
+    duplicate class `name` (globally unique per FR-009), or a
+    duplicate `ulid` (theoretical ULID collision caught by the
+    per-table `UNIQUE` index per FR-021; vanishingly rare in practice
+    but covered for defense-in-depth).
   - `415 Unsupported Media Type` — request `Content-Type` is not
     `application/json`.
   - `500 Internal Server Error` — unexpected server-side failure.
@@ -476,15 +538,18 @@ per-entity blocks stay focused on the domain columns.
 
 - **Teacher** (data store table: `teachers`).
   - `name` (string, required).
-  - `subject_id` (foreign key → `subjects.id`, required; resolves to
-    the referenced subject's natural `name` for the public API
-    response).
+  - `subject_id` (foreign key → `subjects.id`, required; the route
+    handler resolves the request body's `subject.ulid` (per FR-004
+    and Clarifications, Session 2026-06-20 (POST/GET reference
+    object shape)) to `subjects.id` via `uq_subjects_ulid` before
+    insert; the public API exposes the reference as the nested
+    `{ ulid, name }` shape on both POST and GET).
   - `email` (string, required, **UNIQUE** — preserved as the
     domain-natural identifier; previously the PK, now
     `UNIQUE NOT NULL`).
   - `contactNumber` (string, required).
   - `ulid` (string, required, **UNIQUE** — per FR-021; exposed in
-    the Stage 1 `GET /api/teachers` and `POST /api/teachers`
+    the Stage 1 `GET /api/v1.0/teachers` and `POST /api/v1.0/teachers`
     responses as the frontend-stable sync handle).
   - Common audit columns (see block above).
   - Integrity rules: `email` is unique; `ulid` is unique;
@@ -493,16 +558,24 @@ per-entity blocks stay focused on the domain columns.
     or the same `ulid` to be inserted.
 
 - **Class** (data store table: `classes`).
-  - `level_id` (foreign key → `levels.id`, required; resolves to the
-    referenced level's natural `name` for the public API response).
+  - `level_id` (foreign key → `levels.id`, required; the route
+    handler resolves the request body's `level.ulid` (per FR-005
+    and Clarifications, Session 2026-06-20 (POST/GET reference
+    object shape)) to `levels.id` via `uq_levels_ulid` before
+    insert; the public API exposes the reference as the nested
+    `{ ulid, name }` shape on both POST and GET).
   - `name` (string, required, **UNIQUE** — class names are globally
     unique; see Clarifications, Session 2026-06-18).
   - `form_teacher_id` (foreign key → `teachers.id`, required,
     **UNIQUE** — a teacher can be the form teacher of at most one
-    class; resolves to the referenced teacher's `name` for the public
-    API response).
+    class; the route handler resolves the request body's
+    `formTeacher.ulid` (per FR-005 and Clarifications, Session
+    2026-06-20 (POST/GET reference object shape)) to `teachers.id`
+    via `uq_teachers_ulid` before insert; the public API exposes
+    the reference as the nested `{ ulid, name }` shape on both
+    POST and GET).
   - `ulid` (string, required, **UNIQUE** — per FR-021; exposed in
-    the Stage 1 `GET /api/classes` and `POST /api/classes`
+    the Stage 1 `GET /api/v1.0/classes` and `POST /api/v1.0/classes`
     responses as the frontend-stable sync handle).
   - Common audit columns (see block above).
   - Integrity rules: `name` is globally unique; `form_teacher_id` is
@@ -542,9 +615,12 @@ per-entity blocks stay focused on the domain columns.
   class. This relationship is owned by the `classes` table (the
   foreign-key column lives on the class side) and is what makes the
   form-teacher invariant enforceable at the data layer. The public
-  API surface continues to express the relationship as
-  `formTeacher.email` (resolved from the referenced teacher) so the
-  consumer contract is unchanged.
+  API surface expresses the relationship as a nested
+  `formTeacher: { ulid, name }` object (per Clarifications, Session
+  2026-06-20 (POST/GET reference object shape) and FR-020); the
+  `ulid` is the server-side lookup key resolved against
+  `uq_teachers_ulid`, and the `name` echoes the referenced teacher's
+  authoritative `name`.
 
 ## Success Criteria *(mandatory)*
 
@@ -554,12 +630,12 @@ per-entity blocks stay focused on the domain columns.
   remain retrievable through the API after a server restart, with all
   attributes intact.
 - **SC-002**: 100% of attempts to insert a duplicate teacher email,
-  duplicate class `(level, name)` pair, or duplicate form teacher —
-  whether via the API or directly against the data store — are
-  rejected by the data layer.
+  duplicate class `name` (globally unique per FR-009), or duplicate
+  form teacher — whether via the API or directly against the data
+  store — are rejected by the data layer.
 - **SC-003**: 100% of attempts to create a class whose
-  `teacherEmail` does not match an existing teacher are rejected with
-  HTTP `404 Not Found` and the agreed error envelope.
+  `formTeacher.ulid` does not match any registered teacher are
+  rejected with HTTP `404 Not Found` and the agreed error envelope.
 - **SC-004**: 100% of API responses (success and error) across all
   four endpoints conform to the cross-cutting contract: the agreed
   content type, the agreed envelope shape (`{ "data": ... }` for
@@ -580,6 +656,17 @@ per-entity blocks stay focused on the domain columns.
   the data store (per FR-021). The frontend can therefore capture
   the ULID on first read and reuse it as the stable handle for
   future update endpoints without a separate lookup.
+- **SC-009**: 100% of GET and POST API responses for teachers and
+  classes expose reference fields as nested `{ ulid: string,
+  name: string }` objects — teachers expose `subject`; classes
+  expose `level` and `formTeacher`. The `ulid` value on each
+  reference object matches the `ulid` column of the referenced row
+  in the corresponding reference table (`subjects`, `levels`, or
+  `teachers`). The POST request body uses the same nested shape
+  with `ulid` required (26-character Crockford Base32) and `name`
+  optional; the server uses `ulid` for the lookup and ignores
+  `name` (per Clarifications, Session 2026-06-20 (POST/GET reference
+  object shape)).
 
 ## Assumptions
 

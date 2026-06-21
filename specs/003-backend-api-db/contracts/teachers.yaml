@@ -39,9 +39,13 @@ paths:
         `001-teachers/spec.md` Clarifications, Session 2026-06-18).
 
         Response shape per entry:
-        `{ ulid, name, subject, email, contactNumber }`. The `ulid`
-        is the 26-character Crockford Base32 frontend-stable row
-        handle (per `003-backend-api-db/spec.md` FR-021). The
+        `{ ulid, name, subject: { ulid, name }, email, contactNumber }`.
+        The top-level `ulid` and the nested `subject.ulid` are the
+        26-character Crockford Base32 frontend-stable row handles
+        (per `003-backend-api-db/spec.md` FR-021). Reference fields
+        are nested `{ ulid, name }` objects on both POST and GET
+        (per `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-20 (POST/GET reference object shape)). The
         surrogate `id` is deliberately omitted.
       operationId: listTeachers
       responses:
@@ -59,8 +63,8 @@ paths:
                   summary: Two teachers
                   value:
                     data:
-                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T", name: "Mary", subject: "Mathematics", email: "teachermary@gmail.com", contactNumber: "68129414" }
-                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7U", name: "Ken",  subject: "Mother Tongue Language", email: "teacherken@gmail.com", contactNumber: "61824191" }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T", name: "Mary", subject: { ulid: "01H000000000000000000000A1", name: "Mathematics" }, email: "teachermary@gmail.com", contactNumber: "68129414" }
+                      - { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7U", name: "Ken",  subject: { ulid: "01H000000000000000000000A2", name: "Mother Tongue Language" }, email: "teacherken@gmail.com", contactNumber: "61824191" }
         "415":
           $ref: "./common.yaml#/components/responses/UnsupportedMediaType"
         "500":
@@ -72,18 +76,21 @@ paths:
       tags: [teachers]
       summary: Create a new teacher
       description: |
-        Validates the request body with Joi against the active
-        `subjects` list (see `lib/validation/teacher.ts`) and inserts
-        the row. Race-safe via `UNIQUE(teachers.email)`.
+        Validates the request body with Joi. The nested
+        `subject.ulid` is resolved against the active `subjects`
+        list (via `uq_subjects_ulid`); unknown / inactive values
+        are rejected with `400 Bad Request` +
+        `{ "error": "Invalid subject" }` per
+        `003-backend-api-db/spec.md` FR-013. The nested
+        `subject.name` is ignored server-side (display hint; see
+        Clarifications, Session 2026-06-20 (POST/GET reference
+        object shape)). Race-safe via `UNIQUE(teachers.email)`.
 
         A `ulid` is generated server-side (per FR-021) on insert
         and returned in the 201 body so the frontend can cache the
-        row handle.
-
-        The `subject` field must match an active entry in the
-        `subjects` reference list; unknown / inactive values are
-        rejected with `400 Bad Request` + `{ "error": "Invalid
-        subject" }` per `003-backend-api-db/spec.md` FR-013.
+        row handle. Any top-level `ulid` in the request body is
+        ignored (`additionalProperties: false` on the Joi schema
+        rejects unknown top-level fields).
 
         The `contactNumber` MUST be exactly 8 digits, digits-only;
         no leading-digit restriction (per
@@ -100,7 +107,9 @@ paths:
               valid:
                 value:
                   name: "Mary"
-                  subject: "Mathematics"
+                  subject:
+                    ulid: "01H000000000000000000000A1"
+                    name: "Mathematics"
                   email: "teachermary@gmail.com"
                   contactNumber: "68129414"
       responses:
@@ -113,7 +122,9 @@ paths:
               example:
                 ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
                 name: "Mary"
-                subject: "Mathematics"
+                subject:
+                  ulid: "01H000000000000000000000A1"
+                  name: "Mathematics"
                 email: "teachermary@gmail.com"
                 contactNumber: "68129414"
         "400":
@@ -141,9 +152,13 @@ components:
     Teacher:
       type: object
       description: |
-        Stage 1 wire shape of a teacher. There is no `id` column on
-        the `teachers` table — `email` is the natural identifier and
-        `ulid` is the frontend-stable row handle (per FR-021).
+        Stage 1 wire shape of a teacher. `email` is the natural
+        identifier and `ulid` is the frontend-stable row handle
+        (per FR-021). Reference fields are nested
+        `{ ulid, name }` objects per `003-backend-api-db/spec.md`
+        Clarifications, Session 2026-06-20 (POST/GET reference
+        object shape). The surrogate `id` column is deliberately
+        omitted.
       required: [ulid, name, subject, email, contactNumber]
       properties:
         ulid:
@@ -161,12 +176,26 @@ components:
           minLength: 1
           maxLength: 255
         subject:
-          type: string
-          minLength: 1
-          maxLength: 64
-          description: |
-            Active entry from the `subjects` reference list
-            (e.g., "Mathematics").
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced subject (the server-side lookup
+                key — matched against `uq_subjects_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Display name of the referenced subject (e.g.,
+                "Mathematics"). Echoes the authoritative `name` from
+                the `subjects` row; on POST it is a display hint and
+                is NOT validated against the row identified by `ulid`.
         email:
           type: string
           format: email
@@ -192,13 +221,30 @@ components:
           minLength: 1
           maxLength: 255
         subject:
-          type: string
-          minLength: 1
-          maxLength: 64
-          description: |
-            Must match an active entry in the `subjects` reference
-            list. The Joi schema is generated from the active subjects
-            at app boot.
+          type: object
+          required: [ulid]
+          additionalProperties: false
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced subject. Must match an active
+                entry in the `subjects` reference list (looked up via
+                `uq_subjects_ulid`). Per
+                `003-backend-api-db/spec.md` Clarifications, Session
+                2026-06-20 (POST/GET reference object shape).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Optional display name of the referenced subject.
+                Ignored server-side — the lookup is `ulid`-only.
+                Sent for round-trip consistency with the GET response
+                shape.
         email:
           type: string
           format: email

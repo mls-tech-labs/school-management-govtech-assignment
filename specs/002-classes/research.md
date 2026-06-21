@@ -62,14 +62,17 @@ inherited here without re-deriving):
 
 ## 2.2. Form-teacher lookup in `POST /api/v1.0/classes`
 
-**Decision**: Two-step lookup: **first** `SELECT id FROM teachers WHERE email = ?`
+**Decision**: Two-step lookup: **first** `SELECT id FROM teachers WHERE ulid = ?`
 to detect the `404 "Teacher not found"` case AND to obtain the teacher's `id`
 to use as `form_teacher_id`; **then** `INSERT INTO classes (..., form_teacher_id, ...)`
 and let the `UNIQUE` index on `classes.form_teacher_id` catch the
 `409 "Teacher already assigned"` case race-safely. The wire-format
-`teacherEmail` is resolved to the `form_teacher_id` FK column at the route
-handler (per `003-backend-api-db/spec.md` FR-019 — Session 2026-06-19
-audit-columns clarification).
+`formTeacher.ulid` (per Clarifications, Session 2026-06-20 (POST/GET
+reference object shape)) is resolved to the `form_teacher_id` FK column
+at the route handler against `uq_teachers_ulid` (per
+`003-backend-api-db/spec.md` FR-019 — Session 2026-06-19
+audit-columns clarification). The nested `formTeacher.name` is a
+display hint and is ignored server-side.
 
 **Rationale**:
 - The pre-INSERT `SELECT` is the *only* way to distinguish `404 "Teacher not
@@ -86,10 +89,11 @@ audit-columns clarification).
   `INSERT` with a `UNIQUE` violation, and the route handler translates that
   into `409 "Teacher already assigned"`. This is the
   `003-backend-api-db` SC-007 invariant ("at most one attempt succeeds
-  under 10 concurrent submissions").
+  under 10 concurrent submissions"), now keyed on `formTeacher.ulid` per
+  the 2026-06-20 clarification.
 - The pre-INSERT check is a single indexed `SELECT`; with the
-  `UNIQUE(teachers.email)` index, it's O(log N). For Stage 1 (≤ 500
-  teachers) this is sub-millisecond.
+  `UNIQUE(teachers.ulid)` index (per FR-021), it's O(log N). For Stage 1
+  (≤ 500 teachers) this is sub-millisecond.
 
 **Route-handler sketch**:
 
@@ -99,7 +103,10 @@ const schema = await buildCreateClassSchema();
 const { value, error } = schema.validate(req.body);
 if (error) return jsonError(400, error.message);
 
-const teacher = await findTeacherByEmail(value.teacherEmail);
+// Per Clarifications, Session 2026-06-20 (POST/GET reference object shape):
+//   formTeacher.ulid is the server-side lookup key, resolved against
+//   uq_teachers_ulid. The nested formTeacher.name is ignored server-side.
+const teacher = await findTeacherByUlid(value.formTeacher.ulid);
 if (!teacher) return jsonError(404, "Teacher not found");
 
 try {
@@ -122,14 +129,19 @@ try {
   ability to return a clean 404 vs 409 distinction. Rejected.
 - **Application-level lock (`SELECT ... FOR UPDATE`)**: adds complexity
   for no Stage 1 benefit; the `UNIQUE` index is the right tool. Rejected.
+- **Resolve by `teachers.email` instead of `teachers.ulid`**: rejected —
+  the wire format changed to the nested `{ ulid, name }` shape in the
+  2026-06-20 clarification; the lookup key is `ulid`, not `email`.
 
 ---
 
 ## 2.3. `classes.form_teacher_id` — `FOREIGN KEY` vs application-level reference
 
 **Decision**: **`FOREIGN KEY (form_teacher_id) REFERENCES teachers(id)`**
-at the DB level. The route handler resolves the wire-format `teacherEmail`
-to `form_teacher_id` via `findTeacherByEmail` before insert (per
+at the DB level. The route handler resolves the wire-format
+`formTeacher.ulid` (per Clarifications, Session 2026-06-20 (POST/GET
+reference object shape)) to `form_teacher_id` via `findTeacherByUlid`
+against `uq_teachers_ulid` before insert (per
 `003-backend-api-db/spec.md` FR-019). Application-level reference is
 rejected.
 
@@ -149,8 +161,12 @@ rejected.
 - The 001-teachers spec gives every table a surrogate `id` PK (per
   FR-018 — Session 2026-06-19 audit-columns clarification). A
   `FOREIGN KEY` from one surrogate `id` to another is the orthodox
-  pattern. `teachers.email` is still preserved as `UNIQUE NOT NULL` as
-  the natural-key identifier (per FR-020).
+  pattern. `teachers.ulid` is the cross-cutting frontend-stable row
+  handle (per FR-021); the wire-format `formTeacher.ulid` is resolved
+  server-side to `form_teacher_id` via `uq_teachers_ulid`. The
+  natural-key identifier `teachers.email` is still preserved as
+  `UNIQUE NOT NULL` (per FR-020) but is no longer the wire-format
+  lookup key for the form-teacher reference.
 
 **Caveat — deleting a teacher in a future stage**:
 - A future-stage delete-teacher endpoint would have to handle the
@@ -293,51 +309,73 @@ out of Stage 1 scope.
 **Decision**: **One `JOIN` query** in the route handler:
 
 ```sql
-SELECT c.level, c.name, t.name AS form_teacher_name
+SELECT c.id, c.ulid, c.name, c.created_at, c.modified_at,
+       l.ulid AS level_ulid, l.name AS level_name,
+       t.ulid AS form_teacher_ulid, t.name AS form_teacher_name
 FROM classes c
+JOIN levels l ON c.level_id = l.id
 JOIN teachers t ON c.form_teacher_id = t.id
-ORDER BY c.level, c.name;
+ORDER BY l.name, c.name;
 ```
 
 **Rationale**:
-- The response shape requires `formTeacher.name` (per the 002 spec
-  `FR-007`). Either the route handler does a single `JOIN` (one query,
-  one round-trip), or it does N+1 (one query for the class list, then N
-  queries for each class's teacher name).
-- With ≤ 500 classes (Stage 1 upper bound) the N+1 would be ≤ 500
-  round-trips; even on a fast LAN that's 50+ ms vs the JOIN's < 5 ms. The
-  JOIN is the right tool.
-- The `JOIN` rides the `PRIMARY KEY (teachers.id)` index, so it's
-  O(M log N) for M classes and N teachers. Negligible at Stage 1 scale.
-- The typeORM query is expressed as `createQueryBuilder("c")
-  .innerJoinAndSelect("c.formTeacher", "t")` or equivalently via the
-  `@ManyToOne` relation declared on the `Class` entity. Both are
-  idiomatic.
+- The response shape requires `level` and `formTeacher` as nested
+  `{ ulid, name }` reference objects (per Clarifications, Session
+  2026-06-20 (POST/GET reference object shape) and `FR-007`). Either
+  the route handler does a single `JOIN` (one query, one round-trip),
+  or it does N+1 (one query for the class list, then N queries for
+  each class's level + teacher names).
+- With ≤ 500 classes (Stage 1 upper bound) the N+1 would be ≤ 1000
+  round-trips; even on a fast LAN that's 100+ ms vs the JOIN's < 5 ms.
+  The JOIN is the right tool.
+- The `JOIN` rides the `PRIMARY KEY (teachers.id)` and
+  `PRIMARY KEY (levels.id)` indexes, so it's O(M log N) for M classes
+  and N teachers/levels. Negligible at Stage 1 scale.
+- The typeORM query is expressed as
+  `createQueryBuilder("c").innerJoinAndSelect("c.formTeacher", "t").innerJoinAndSelect("c.levelRef", "l")`
+  or equivalently via the `@ManyToOne` relations declared on the
+  `Class` entity. Both are idiomatic.
 
-**Response shape** (per `FR-007` and the 002 spec Assumptions):
+**Response shape** (per `FR-007`, the 2026-06-20 (POST/GET reference
+object shape) clarification, and the 002 spec Assumptions):
 
 ```json
 {
   "data": [
-    { "level": "Primary 1", "name": "Class 1A", "formTeacher": { "name": "Alice Tan" } },
-    { "level": "Primary 1", "name": "Class 1B", "formTeacher": { "name": "Bobby Lim" } }
+    {
+      "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7X",
+      "level": { "ulid": "01H000000000000000000000B1", "name": "Primary 1" },
+      "name": "Class 1A",
+      "formTeacher": { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T", "name": "Alice Tan" }
+    },
+    {
+      "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7Y",
+      "level": { "ulid": "01H000000000000000000000B1", "name": "Primary 1" },
+      "name": "Class 1B",
+      "formTeacher": { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7U", "name": "Bobby Lim" }
+    }
   ]
 }
 ```
 
 The `id` column is intentionally **not** in the response (per the 002 spec
-Clarifications, Q5).
+Clarifications, Q5). The audit columns (`created_at`, `modified_at`,
+`created_by`, `modified_by`, `version`) are also hidden from the
+Stage 1 API response (per FR-020, owned by `003-backend-api-db`).
 
 **Alternatives considered**:
-- **N+1 (find classes, then for each find teacher)** — naive, slow at
-  scale, and explicitly a known anti-pattern. Rejected.
-- **Denormalize the form teacher name onto the `classes` row** (cache
-  the name on insert) — adds a write-time invariant ("if the teacher's
-  name changes, update all of their classes") that the Stage 1 spec
-  doesn't have. Rejected.
+- **N+1 (find classes, then for each find level + teacher)** — naive,
+  slow at scale, and explicitly a known anti-pattern. Rejected.
+- **Denormalize the form teacher name and level name onto the `classes`
+  row** (cache the names on insert) — adds a write-time invariant
+  ("if the teacher's name or level's name changes, update all of their
+  classes") that the Stage 1 spec doesn't have. Rejected.
 - **Return the teacher's email instead of the name** — violates `FR-007`
   ("each entry contains `level`, `name`, and `formTeacher.name`").
   Rejected.
+- **Flat response shape (`levelName`, `formTeacherName`)** — superseded by
+  the 2026-06-20 clarification: the wire-format reference is now a
+  nested `{ ulid, name }` object on both POST and GET. Rejected.
 
 ---
 

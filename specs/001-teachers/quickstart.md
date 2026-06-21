@@ -60,25 +60,33 @@ Stage 1 seed list — all prepared by the user.
 
 ## Scenario 1 — Add a teacher (UI happy path)
 
-**Goal**: verify `FR-001`, `FR-002`, `FR-006`, and `SC-001`.
+**Goal**: verify `FR-001`, `FR-002`, `FR-006`, and `SC-001`. Per
+Clarifications, Session 2026-06-20 (POST/GET reference object shape),
+the Subject dropdown submits the selected subject's `ulid`; the
+dropdown labels show the subject `name` for the administrator.
 
 1. Open `http://localhost:3000/teachers/add` in a browser.
 2. The Add Teacher form is rendered with four controls in this order:
-   **Name** (text), **Subject** (dropdown), **Email** (text), **Contact
-   Number** (text). The Subject dropdown is populated with the seed list
-   (English, Mathematics, …).
+   **Name** (text), **Subject** (dropdown of `{ ulid, name }` entries —
+   `GET /api/v1.0/subjects` populates the options), **Email** (text),
+   **Contact Number** (text).
 3. Fill in:
    - Name: `Alice Tan`
-   - Subject: `Mathematics`
+   - Subject: pick `Mathematics` (the dropdown submits the selected
+     row's `ulid`, e.g. `01H000000000000000000000A1`)
    - Email: `alice@example.com`
    - Contact Number: `91234567`
 4. Click **Save**.
 5. The page navigates to `/teachers` and the new entry is visible in the
-   list with the four values, in a readable filled state (`FR-008`, `FR-009`).
+   list. The Subject cell shows `Mathematics` (the authoritative `name`
+   from the `subjects` row — the server ignores the client-supplied
+   `name` hint and echoes the row's `name` in the response, per
+   Session 2026-06-20 clarification).
 6. The whole flow finishes in well under 30 s (`SC-001`).
 
-**Acceptance check**: a row matching `Alice Tan / Mathematics /
-alice@example.com / 91234567` is on the Teachers list.
+**Acceptance check**: a row matching
+`{ ulid, name: "Alice Tan", subject: { ulid, name: "Mathematics" }, email: "alice@example.com", contactNumber: "91234567" }`
+is on the Teachers list.
 
 ---
 
@@ -89,24 +97,27 @@ The `ulid` field is the cross-cutting frontend-stable row handle (per
 FR-021, owned by `003-backend-api-db`).
 
 ```bash
-# 2.1. Create a teacher
+# 2.1. Create a teacher (subject is a nested { ulid, name } per Session 2026-06-20)
 curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Bobby Lim",
-    "subject": "Science",
+    "subject": {
+      "ulid": "01H000000000000000000000A2",
+      "name": "Science"
+    },
     "email": "bobby@example.com",
     "contactNumber": "98765432"
   }'
 # Expect: HTTP/1.1 201 Created
-# Body:   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","name":"Bobby Lim","subject":"Science","email":"bobby@example.com","contactNumber":"98765432"}
+# Body:   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","name":"Bobby Lim","subject":{"ulid":"01H000000000000000000000A2","name":"Science"},"email":"bobby@example.com","contactNumber":"98765432"}
 
 # 2.2. List teachers (should include Alice + Bobby)
 curl -i http://localhost:3000/api/v1.0/teachers
 # Expect: HTTP/1.1 200 OK
 # Body:   {"data":[
-#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Alice Tan","subject":"Mathematics","email":"alice@example.com","contactNumber":"91234567"},
-#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","name":"Bobby Lim","subject":"Science","email":"bobby@example.com","contactNumber":"98765432"}
+#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Alice Tan","subject":{"ulid":"01H000000000000000000000A1","name":"Mathematics"},"email":"alice@example.com","contactNumber":"91234567"},
+#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","name":"Bobby Lim","subject":{"ulid":"01H000000000000000000000A2","name":"Science"},"email":"bobby@example.com","contactNumber":"98765432"}
 #         ]}
 ```
 
@@ -151,7 +162,10 @@ curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Charlie",
-    "subject": "English",
+    "subject": {
+      "ulid": "01H000000000000000000000A0",
+      "name": "English"
+    },
     "email": "not-an-email",
     "contactNumber": "91234567"
   }'
@@ -173,21 +187,21 @@ leading-digit restriction).
 # 5.1. Too short
 curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"D","subject":"English","email":"d@example.com","contactNumber":"9123"}'
+  -d '{"name":"D","subject":{"ulid":"01H000000000000000000000A0","name":"English"},"email":"d@example.com","contactNumber":"9123"}'
 # Expect: HTTP/1.1 400 Bad Request
 # Body:   {"error":"contactNumber must match pattern \"^\\d{8}$\""}
 
 # 5.2. Non-numeric
 curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"E","subject":"English","email":"e@example.com","contactNumber":"9123456a"}'
+  -d '{"name":"E","subject":{"ulid":"01H000000000000000000000A0","name":"English"},"email":"e@example.com","contactNumber":"9123456a"}'
 # Expect: HTTP/1.1 400 Bad Request
 # Body:   {"error":"contactNumber must match pattern \"^\\d{8}$\""}
 
 # 5.3. Valid length, any leading digit is now accepted (per FR-004, Session 2026-06-21)
 curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"F","subject":"English","email":"f@example.com","contactNumber":"51234567"}'
+  -d '{"name":"F","subject":{"ulid":"01H000000000000000000000A0","name":"English"},"email":"f@example.com","contactNumber":"51234567"}'
 # Expect: HTTP/1.1 201 Created (the contact number is accepted — any digit is a valid leading digit)
 ```
 
@@ -206,18 +220,23 @@ curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "G",
-    "subject": "Underwater Basket Weaving",
+    "subject": {
+      "ulid": "01H000000000000000000000ZZ",
+      "name": "Underwater Basket Weaving"
+    },
     "email": "g@example.com",
     "contactNumber": "91234567"
   }'
 # Expect: HTTP/1.1 400 Bad Request
-# Body:   {"error":"subject must be one of [English, Mathematics, Science, ...]"}
+# Body:   {"error":"subject.ulid must be one of [...]"}
 ```
 
-**Acceptance check**: the Joi schema rejects the unknown subject with
-`400`. The DB FK would also have caught it (the `teachers.subject` →
-`subjects.name` FK), but the route handler never lets the bad payload
-reach the DB.
+**Acceptance check**: the Joi schema rejects the unknown `subject.ulid`
+with `400`. The DB FK would also have caught it (the
+`teachers.subject_id → subjects.id` FK), but the route handler never
+lets the bad payload reach the DB. The lookup is `ulid`-keyed against
+`uq_subjects_ulid` (per Clarifications, Session 2026-06-20 (POST/GET
+reference object shape)); the nested `subject.name` is ignored.
 
 ---
 
@@ -229,13 +248,13 @@ reach the DB.
 # 7.1. First submission
 curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"H","subject":"English","email":"h@example.com","contactNumber":"91234567"}'
+  -d '{"name":"H","subject":{"ulid":"01H000000000000000000000A0","name":"English"},"email":"h@example.com","contactNumber":"91234567"}'
 # Expect: 201 Created
 
 # 7.2. Second submission with the same email
 curl -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"H2","subject":"English","email":"h@example.com","contactNumber":"98765432"}'
+  -d '{"name":"H2","subject":{"ulid":"01H000000000000000000000A0","name":"English"},"email":"h@example.com","contactNumber":"98765432"}'
 # Expect: HTTP/1.1 409 Conflict
 # Body:   {"error":"Email already in use"}
 ```
@@ -296,7 +315,7 @@ names, every `ulid` is exactly 26 characters of Crockford Base32.
 # 10.1. Create a teacher
 curl -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"J","subject":"English","email":"j@example.com","contactNumber":"91234567"}'
+  -d '{"name":"J","subject":{"ulid":"01H000000000000000000000A0","name":"English"},"email":"j@example.com","contactNumber":"91234567"}'
 # Expect: 201 Created
 
 # 10.2. Restart the app container

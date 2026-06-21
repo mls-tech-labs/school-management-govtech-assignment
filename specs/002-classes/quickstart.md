@@ -68,7 +68,11 @@ user's SQL.
 
 ## Scenario 1 — Add a class (UI happy path)
 
-**Goal**: verify `FR-001`, `FR-002`, `FR-006`, and `SC-001`.
+**Goal**: verify `FR-001`, `FR-002`, `FR-006`, and `SC-001`. Per
+Clarifications, Session 2026-06-20 (POST/GET reference object shape),
+both the **Level** and **Form Teacher** dropdowns submit the selected
+row's `ulid`; the dropdown labels show the row's `name` for the
+administrator.
 
 1. Ensure at least one teacher exists (`GET /api/v1.0/teachers` returns a
    non-empty list). If not, follow
@@ -76,19 +80,27 @@ user's SQL.
    to seed one.
 2. Open `http://localhost:3000/classes/add` in a browser.
 3. The Add Class form is rendered with three controls in this order:
-   **Level** (dropdown), **Name** (text), **Form Teacher** (searchable
-   dropdown of registered teachers).
+   **Level** (dropdown of `{ ulid, name }` entries — `GET /api/v1.0/levels`
+   populates the options), **Name** (text), **Form Teacher** (searchable
+   dropdown of registered teachers — `GET /api/v1.0/teachers` populates
+   the options; each option is a `{ ulid, name }` pair).
 4. Fill in:
-   - Level: `Primary 1`
+   - Level: pick `Primary 1` (the dropdown submits the selected row's
+     `ulid`, e.g. `01H000000000000000000000B1`)
    - Name: `Class 1A`
-   - Form Teacher: `Alice Tan` (or whatever existing teacher you have)
+   - Form Teacher: pick `Alice Tan` (the dropdown submits the selected
+     row's `ulid`, e.g. `01H000000000000000000000TT`)
 5. Click **Save**.
 6. The page navigates to `/classes` and the new entry is visible in the
    list with `level`, `name`, and `formTeacher.name`, in a readable
-   filled state (`FR-008`, `FR-009`).
+   filled state (`FR-008`, `FR-009`). The Level and Form Teacher cells
+   show the authoritative `name` from the referenced row — the server
+   ignores the client-supplied `name` hint and echoes the row's `name`
+   in the response (per Clarifications, Session 2026-06-20).
 7. The whole flow finishes in well under 30 s (`SC-001`).
 
-**Acceptance check**: a row matching `Primary 1 / Class 1A / Alice Tan`
+**Acceptance check**: a row matching
+`{ level: { ulid, name: "Primary 1" }, name: "Class 1A", formTeacher: { ulid, name: "Alice Tan" } }`
 is on the Classes list.
 
 ---
@@ -100,30 +112,37 @@ The `ulid` field is the cross-cutting frontend-stable row handle (per
 FR-021, owned by `003-backend-api-db`).
 
 ```bash
-# 2.1. Create a class
+# 2.1. Create a class (level + formTeacher are nested { ulid, name } per Session 2026-06-20)
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Primary 1",
+    "level": {
+      "ulid": "01H000000000000000000000B1",
+      "name": "Primary 1"
+    },
     "name": "Class 1B",
-    "teacherEmail": "bobby@example.com"
+    "formTeacher": {
+      "ulid": "01H000000000000000000000UU",
+      "name": "Bobby Lim"
+    }
   }'
 # Expect: HTTP/1.1 201 Created
-# Body:   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5PA1","level":"Primary 1","name":"Class 1B","formTeacher":{"name":"Bobby Lim"}}
+# Body:   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5PA1","level":{"ulid":"01H000000000000000000000B1","name":"Primary 1"},"name":"Class 1B","formTeacher":{"ulid":"01H000000000000000000000UU","name":"Bobby Lim"}}
 
 # 2.2. List classes (should include Class 1A from Scenario 1 + Class 1B)
 curl -i http://localhost:3000/api/v1.0/classes
 # Expect: HTTP/1.1 200 OK
 # Body:   {"data":[
-#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5PA0","level":"Primary 1","name":"Class 1A","formTeacher":{"name":"Alice Tan"}},
-#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5PA1","level":"Primary 1","name":"Class 1B","formTeacher":{"name":"Bobby Lim"}}
+#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5PA0","level":{"ulid":"01H000000000000000000000B1","name":"Primary 1"},"name":"Class 1A","formTeacher":{"ulid":"01H000000000000000000000TT","name":"Alice Tan"}},
+#           {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5PA1","level":{"ulid":"01H000000000000000000000B1","name":"Primary 1"},"name":"Class 1B","formTeacher":{"ulid":"01H000000000000000000000UU","name":"Bobby Lim"}}
 #         ]}
 ```
 
 **Acceptance check**: 201 on POST, 200 on GET, the returned `data` array
-contains both classes with the resolved form-teacher names, every entry
-carries a `ulid` field with a 26-character Crockford Base32 string, and
-no `id` field is present in any entry.
+contains both classes with the resolved level and form-teacher names as
+nested `{ ulid, name }` objects, every entry carries a `ulid` field with
+a 26-character Crockford Base32 string, and no `id` field is present in
+any entry.
 
 ---
 
@@ -157,15 +176,24 @@ curl -i http://localhost:3000/api/v1.0/classes
 
 **Goal**: verify `FR-004`, `FR-005b`, and the `404` path. This is the
 "race" case where the dropdown had a teacher at page-load time but the
-teacher was deleted before the form was submitted.
+teacher was deleted before the form was submitted. Per Clarifications,
+Session 2026-06-20 (POST/GET reference object shape), the lookup key
+is `formTeacher.ulid` (resolved against `uq_teachers_ulid`), not the
+teacher's `email`.
 
 ```bash
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Primary 1",
+    "level": {
+      "ulid": "01H000000000000000000000B1",
+      "name": "Primary 1"
+    },
     "name": "Class 1C",
-    "teacherEmail": "ghost@example.com"
+    "formTeacher": {
+      "ulid": "01H000000000000000000000ZZ",
+      "name": "Ghost Teacher"
+    }
   }'
 # Expect: HTTP/1.1 404 Not Found
 # Body:   {"error":"Teacher not found"}
@@ -177,39 +205,58 @@ curl -i -X POST http://localhost:3000/api/v1.0/classes \
 
 ## Scenario 5 — Validation: unknown level (`400`)
 
-**Goal**: verify `FR-005a` and the closed-set Joi validation against the
-active levels.
+**Goal**: verify `FR-005a` and the closed-set Joi validation against
+the active levels. Per Clarifications, Session 2026-06-20 (POST/GET
+reference object shape), the lookup key is `level.ulid` (resolved
+against `uq_levels_ulid`), not the level's `name`.
 
 ```bash
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Kindergarten 1",
+    "level": {
+      "ulid": "01H000000000000000000000KK",
+      "name": "Kindergarten 1"
+    },
     "name": "Class K1",
-    "teacherEmail": "alice@example.com"
+    "formTeacher": {
+      "ulid": "01H000000000000000000000TT",
+      "name": "Alice Tan"
+    }
   }'
 # Expect: HTTP/1.1 400 Bad Request
-# Body:   {"error":"level must be one of [Primary 1, Primary 2, ...]"}
+# Body:   {"error":"level.ulid must be one of [...]"}
 ```
 
-**Acceptance check**: status `400`, the level name is rejected.
+**Acceptance check**: status `400`, the unknown `level.ulid` is
+rejected.
 
 ---
 
-## Scenario 6 — Validation: invalid email format (`400`)
+## Scenario 6 — Validation: malformed `formTeacher.ulid` (`400`)
 
-**Goal**: verify `FR-003` and the `400` + error envelope.
+**Goal**: verify `FR-004` and the `400` + error envelope for the
+nested reference object. Per Clarifications, Session 2026-06-20
+(POST/GET reference object shape), the form-teacher reference is a
+nested `{ ulid, name }` object — a malformed `formTeacher.ulid`
+(wrong length, not Crockford Base32) is rejected by Joi with `400`.
 
 ```bash
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Primary 1",
+    "level": {
+      "ulid": "01H000000000000000000000B1",
+      "name": "Primary 1"
+    },
     "name": "Class 1D",
-    "teacherEmail": "not-an-email"
+    "formTeacher": {
+      "ulid": "not-a-ulid",
+      "name": "Alice Tan"
+    }
   }'
 # Expect: HTTP/1.1 400 Bad Request
-# Body:   {"error":"teacherEmail must be a valid email"}
+# Body:   {"error":"formTeacher.ulid length must be 26 characters long"}
 ```
 
 **Acceptance check**: status `400`, body matches `{ "error": "..." }`.
@@ -226,9 +273,15 @@ constraint.
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Primary 2",
+    "level": {
+      "ulid": "01H000000000000000000000B2",
+      "name": "Primary 2"
+    },
     "name": "Class 2A",
-    "teacherEmail": "alice@example.com"
+    "formTeacher": {
+      "ulid": "01H000000000000000000000TT",
+      "name": "Alice Tan"
+    }
   }'
 # Expect: 201 Created
 
@@ -236,9 +289,15 @@ curl -i -X POST http://localhost:3000/api/v1.0/classes \
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Primary 2",
+    "level": {
+      "ulid": "01H000000000000000000000B2",
+      "name": "Primary 2"
+    },
     "name": "Class 2A",
-    "teacherEmail": "bobby@example.com"
+    "formTeacher": {
+      "ulid": "01H000000000000000000000UU",
+      "name": "Bobby Lim"
+    }
   }'
 # Expect: HTTP/1.1 409 Conflict
 # Body:   {"error":"Class name already in use"}
@@ -262,9 +321,15 @@ automated race test).
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
   -d '{
-    "level": "Primary 2",
+    "level": {
+      "ulid": "01H000000000000000000000B2",
+      "name": "Primary 2"
+    },
     "name": "Class 2B",
-    "teacherEmail": "alice@example.com"
+    "formTeacher": {
+      "ulid": "01H000000000000000000000TT",
+      "name": "Alice Tan"
+    }
   }'
 # Expect: HTTP/1.1 409 Conflict
 # Body:   {"error":"Teacher already assigned"}
@@ -284,7 +349,7 @@ the exact error message `"Teacher already assigned"`.
 ```bash
 curl -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: text/plain" \
-  -d 'level=Primary+1&name=Class+1E&teacherEmail=alice@example.com'
+  -d 'level=Primary+1&name=Class+1E&formTeacher=Alice'
 # Expect: HTTP/1.1 415 Unsupported Media Type
 # Body:   {"error":"Content-Type must be application/json"}
 ```
@@ -326,7 +391,7 @@ FR-016, Session 2026-06-21).
 # 11.1. Create a class
 curl -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
-  -d '{"level":"Secondary 1","name":"Class Sec1A","teacherEmail":"alice@example.com"}'
+  -d '{"level":{"ulid":"01H000000000000000000000B7","name":"Secondary 1"},"name":"Class Sec1A","formTeacher":{"ulid":"01H000000000000000000000TT","name":"Alice Tan"}}'
 # Expect: 201 Created
 
 # 11.2. Restart the app container
@@ -351,20 +416,21 @@ formal race is covered by the integration suite.
 
 ```bash
 # 12.1. Make sure Alice is NOT yet a form teacher (clean slate)
-#       Resolve Alice's id first; substitute the actual id below.
+#       Resolve Alice's ulid (and id) first; substitute the actual values below.
+ALICE_TEACHER_ULID="01H000000000000000000000TT"   # placeholder; replace with real
 ALICE_TEACHER_ID=$(docker compose -f docker/docker-compose.yml exec -T mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin -N -B \
-  -e "SELECT id FROM teachers WHERE email='alice@example.com';")
+  -e "SELECT id FROM teachers WHERE ulid='${ALICE_TEACHER_ULID}';")
 docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
   -e "DELETE FROM classes WHERE form_teacher_id=${ALICE_TEACHER_ID};"
 
-# 12.2. Fire 10 parallel POSTs with the same teacherEmail
+# 12.2. Fire 10 parallel POSTs with the same formTeacher.ulid
 for i in $(seq 1 10); do
   curl -s -o /tmp/r$i.json -w "%{http_code}\n" \
     -X POST http://localhost:3000/api/v1.0/classes \
     -H "Content-Type: application/json" \
-    -d "{\"level\":\"Primary 1\",\"name\":\"Class Race $i\",\"teacherEmail\":\"alice@example.com\"}" &
+    -d "{\"level\":{\"ulid\":\"01H000000000000000000000B1\",\"name\":\"Primary 1\"},\"name\":\"Class Race $i\",\"formTeacher\":{\"ulid\":\"${ALICE_TEACHER_ULID}\",\"name\":\"Alice Tan\"}}" &
 done
 wait
 
@@ -376,7 +442,9 @@ grep -l "201" /tmp/r*.json  # Expect: 1 (or check via the actual status code)
 
 **Acceptance check**: exactly one of the 10 submissions succeeds; the
 other 9 return `409` with `"Teacher already assigned"`. The race is
-serialised by the `UNIQUE(classes.form_teacher_id)` index.
+serialised by the `UNIQUE(classes.form_teacher_id)` index, now keyed on
+the `formTeacher.ulid` lookup per Clarifications, Session 2026-06-20
+(POST/GET reference object shape).
 
 ---
 

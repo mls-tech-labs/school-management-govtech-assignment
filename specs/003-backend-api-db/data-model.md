@@ -98,18 +98,21 @@ violate them.
   safe default is to refuse the delete and surface an error to the
   future endpoint.
 - **Application-level defence**: the `POST /api/v1.0/classes` route handler
-  resolves `formTeacherEmail` → `form_teacher_id` *before* the
-  `INSERT` (via a `findTeacherByEmail`) so it can render
+  resolves `formTeacher.ulid` → `form_teacher_id` *before* the
+  `INSERT` (via a `findTeacherByUlid` against `uq_teachers_ulid`,
+  per Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape) and FR-005) so it can render
   `404 Teacher not found` cleanly. The FK is the second line of
-  defence for the race window.
+  defence for the race window. The nested `formTeacher.name` field
+  is a display hint and is ignored server-side.
 
 ### 2.3. Form-teacher uniqueness — FR-008
 
 - **Mechanism**: `UNIQUE KEY uq_classes_form_teacher
   (form_teacher_id)` on the `classes` table.
 - **Race-safety**: this is what `SC-007` pins down. Ten concurrent
-  `POST /api/v1.0/classes` with the same `formTeacherEmail` — at most one
-  succeeds; the other nine fail with `ER_DUP_ENTRY`. The route
+  `POST /api/v1.0/classes` with the same `formTeacher.ulid` — at most
+  one succeeds; the other nine fail with `ER_DUP_ENTRY`. The route
   handler maps the failure to `409 Teacher already assigned`.
 - **Why a separate `UNIQUE` index, not just the FK**: the FK enforces
   "the form teacher exists"; the `UNIQUE` enforces "no other class
@@ -133,9 +136,12 @@ violate them.
 - **Application-level defence**: the Joi schemas for `POST /api/v1.0/teachers`
   and `POST /api/v1.0/classes` are generated at boot from the active
   entries in `subjects` and `levels`, so a request that references an
-  unknown or inactive reference-list entry is rejected at validation
-  time with `400 Invalid subject` / `400 Invalid level`. The FK is the
-  backstop for direct writes that bypass the API.
+  unknown or inactive `subject.ulid` / `level.ulid` is rejected at
+  validation time with `400 Invalid subject` / `400 Invalid level`
+  (per Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape) — the lookup is `ulid`-keyed, the nested `name` field is a
+  display hint and is ignored). The FK is the backstop for direct
+  writes that bypass the API.
 - **Seed discipline**: the reference lists are populated by the user
   against the user-prepared MySQL container (per FR-016,
   Session 2026-06-21). A reference-list row that is referenced by a
@@ -203,15 +209,36 @@ violate them.
   — no `@ManyToOne` against `ulid`.
 - **Wire shape**: `ulid` is the **first property** in every entity's
   response shape, ahead of the natural-key fields, so it is the
-  property a frontend cache key is built around.
+  property a frontend cache key is built around. Reference fields
+  are nested `{ ulid, name }` objects on both POST and GET (per
+  Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape)).
   Example `POST /api/v1.0/teachers` 201 body:
   ```json
   {
     "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T",
     "name": "Alice Tan",
-    "subject": "Mathematics",
+    "subject": {
+      "ulid": "01H000000000000000000000A1",
+      "name": "Mathematics"
+    },
     "email": "alice@example.com",
     "contactNumber": "91234567"
+  }
+  ```
+  Example `POST /api/v1.0/classes` 201 body:
+  ```json
+  {
+    "ulid": "01HZX8K2D5Y3J8QF8W9B3N5PA0",
+    "level": {
+      "ulid": "01H000000000000000000000B1",
+      "name": "Primary 1"
+    },
+    "name": "Class 1A",
+    "formTeacher": {
+      "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7R",
+      "name": "Alice Tan"
+    }
   }
   ```
 - **Generation site**: a thin `lib/ulid.ts` wrapper exports

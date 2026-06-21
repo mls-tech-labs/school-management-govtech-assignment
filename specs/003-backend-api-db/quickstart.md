@@ -101,13 +101,13 @@ out as "your API may be subjected to automated test tools".
 # 1.1 POST /api/v1.0/teachers (missing name)
 curl -s -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"subject":"Mathematics","email":"x@x.com","contactNumber":"91234567"}' \
+  -d '{"subject":{"ulid":"01H000000000000000000000A1","name":"Mathematics"},"email":"x@x.com","contactNumber":"91234567"}' \
   | jq .
 
-# 1.2 POST /api/v1.0/classes (missing teacherEmail)
+# 1.2 POST /api/v1.0/classes (missing formTeacher)
 curl -s -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
-  -d '{"level":"Primary 1","name":"Class Z"}' \
+  -d '{"level":{"ulid":"01H000000000000000000000B1","name":"Primary 1"},"name":"Class Z"}' \
   | jq .
 
 # 1.3 GET /api/v1.0/subjects (no body — should still 200; sanity check)
@@ -138,16 +138,16 @@ curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
 # 2.2 POST /api/v1.0/classes with form-urlencoded
 curl -s -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d 'level=Primary+1&name=Class+1A&teacherEmail=alice@example.com'
+  -d 'level=Primary+1&name=Class+1A&formTeacher=alice'
 
 # 2.3 POST /api/v1.0/teachers with no Content-Type header at all
 curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
-  -d '{"name":"NoHeader","subject":"Mathematics","email":"noh@example.com","contactNumber":"91234567"}'
+  -d '{"name":"NoHeader","subject":{"ulid":"01H000000000000000000000A1","name":"Mathematics"},"email":"noh@example.com","contactNumber":"91234567"}'
 
 # 2.4 POST /api/v1.0/teachers with charset suffix "application/json; charset=utf-8"
 curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json; charset=utf-8" \
-  -d '{"name":"Mary","subject":"Mathematics","email":"mary@example.com","contactNumber":"91234567"}'
+  -d '{"name":"Mary","subject":{"ulid":"01H000000000000000000000A1","name":"Mathematics"},"email":"mary@example.com","contactNumber":"91234567"}'
 ```
 
 **Acceptance check**: requests 2.1, 2.2, 2.3 return `415` and a body
@@ -168,12 +168,12 @@ subject` / `400 Invalid level`, not at the FK level with `409`.
 # 3.1 POST /api/v1.0/teachers with an unknown subject
 curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"Bob","subject":"Underwater Basket Weaving","email":"bob@example.com","contactNumber":"91234567"}'
+  -d '{"name":"Bob","subject":{"ulid":"01H000000000000000000000ZZ","name":"Underwater Basket Weaving"},"email":"bob@example.com","contactNumber":"91234567"}'
 
 # 3.2 POST /api/v1.0/classes with an unknown level
 curl -s -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
-  -d '{"level":"Kindergarten 1","name":"Class K1","teacherEmail":"alice@example.com"}'
+  -d '{"level":{"ulid":"01H000000000000000000000ZZ","name":"Kindergarten 1"},"name":"Class K1","formTeacher":{"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7R","name":"Alice Tan"}}'
 
 # 3.3 POST /api/v1.0/teachers with a subject that exists but is inactive (deactivate it first)
 docker compose -f docker/docker-compose.yml exec mysql \
@@ -182,7 +182,7 @@ docker compose -f docker/docker-compose.yml exec mysql \
 
 curl -s -i -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"Carl","subject":"Music","email":"carl@example.com","contactNumber":"91234567"}'
+  -d '{"name":"Carl","subject":{"ulid":"01H000000000000000000000A8","name":"Music"},"email":"carl@example.com","contactNumber":"91234567"}'
 
 # Restore the active flag (or restart from scratch)
 docker compose -f docker/docker-compose.yml exec mysql \
@@ -193,7 +193,9 @@ docker compose -f docker/docker-compose.yml exec mysql \
 **Acceptance check**: all three return `400 Bad Request` and a body of
 `{ "error": "Invalid subject" }` or `{ "error": "Invalid level" }` —
 not `409 Conflict`. The Joi schema, generated at boot from the active
-list, is the gate; the FK never has to fire for these cases.
+list of `subject.ulid` / `level.ulid` values (per Clarifications,
+Session 2026-06-20 (POST/GET reference object shape)), is the gate;
+the FK never has to fire for these cases.
 
 ---
 
@@ -291,11 +293,11 @@ intact, including the `ulid` row handle (per FR-021).
 # 7.1 Create a teacher and a class
 curl -s -X POST http://localhost:3000/api/v1.0/teachers \
   -H "Content-Type: application/json" \
-  -d '{"name":"Restart Teacher","subject":"Mathematics","email":"restart@example.com","contactNumber":"91234567"}'
+  -d '{"name":"Restart Teacher","subject":{"ulid":"01H000000000000000000000A1","name":"Mathematics"},"email":"restart@example.com","contactNumber":"91234567"}'
 
 curl -s -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
-  -d '{"level":"Primary 1","name":"Class Restart","teacherEmail":"restart@example.com"}'
+  -d '{"level":{"ulid":"01H000000000000000000000B1","name":"Primary 1"},"name":"Class Restart","formTeacher":{"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Restart Teacher"}}'
 
 # 7.2 Restart the app container (NOT the MySQL container — the data must persist)
 docker compose -f docker/docker-compose.yml restart app
@@ -304,23 +306,24 @@ docker compose -f docker/docker-compose.yml restart app
 curl -s http://localhost:3000/api/v1.0/teachers | jq '.data[] | select(.email == "restart@example.com")'
 curl -s http://localhost:3000/api/v1.0/classes | jq '.data[] | select(.name == "Class Restart")'
 
-# Expect (teacher): {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Restart Teacher","subject":"Mathematics","email":"restart@example.com","contactNumber":"91234567"}
-# Expect (class):   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","level":"Primary 1","name":"Class Restart","formTeacher":{"name":"Restart Teacher"}}
+# Expect (teacher): {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Restart Teacher","subject":{"ulid":"01H000000000000000000000A1","name":"Mathematics"},"email":"restart@example.com","contactNumber":"91234567"}
+# Expect (class):   {"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7U","level":{"ulid":"01H000000000000000000000B1","name":"Primary 1"},"name":"Class Restart","formTeacher":{"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Restart Teacher"}}
 ```
 
 **Acceptance check**: both records are still present, with all
 attributes intact (including `ulid` — the 26-character Crockford
 Base32 frontend-stable row handle). The cross-feature FK is still
-intact (the class still resolves the form teacher by name). The
-`ulid` returned on creation is the same `ulid` returned after
-restart — it is persisted, not regenerated.
+intact (the class still resolves the form teacher by `ulid` and
+echoes the authoritative `name`). The `ulid` returned on creation is
+the same `ulid` returned after restart — it is persisted, not
+regenerated.
 
 ---
 
 ## Scenario 8 — Race-safe form-teacher uniqueness (SC-007, FR-008)
 
-**Goal**: verify that 10 concurrent `POST /api/classes` with the
-same `teacherEmail` produce exactly one success and nine `409`s.
+**Goal**: verify that 10 concurrent `POST /api/v1.0/classes` with the
+same `formTeacher.ulid` produce exactly one success and nine `409`s.
 
 ```bash
 # 8.1 Make sure the test teacher is NOT yet a form teacher (clean slate)
@@ -328,12 +331,12 @@ docker compose -f docker/docker-compose.yml exec mysql \
   mysql -uroot -p"$MYSQL_ROOT_PASSWORD" admin \
   -e "DELETE FROM classes WHERE form_teacher_id=(SELECT id FROM teachers WHERE email='restart@example.com');"
 
-# 8.2 Fire 10 parallel POSTs with the same teacherEmail
+# 8.2 Fire 10 parallel POSTs with the same formTeacher.ulid
 for i in $(seq 1 10); do
   curl -s -o /tmp/r$i.json -w "%{http_code}\n" \
     -X POST http://localhost:3000/api/v1.0/classes \
     -H "Content-Type: application/json" \
-    -d "{\"level\":\"Primary 1\",\"name\":\"Class Race $i\",\"teacherEmail\":\"restart@example.com\"}" &
+    -d "{\"level\":{\"ulid\":\"01H000000000000000000000B1\",\"name\":\"Primary 1\"},\"name\":\"Class Race $i\",\"formTeacher\":{\"ulid\":\"01HZX8K2D5Y3J8QF8W9B3N5P7T\",\"name\":\"Restart Teacher\"}}" &
 done
 wait
 
@@ -349,7 +352,7 @@ grep -l "Internal server error" /tmp/r*.json | wc -l   # Expect: 0
 **Acceptance check**: exactly one submission succeeds; the other
 nine return `409` with `"Teacher already assigned"`. Zero `500`s. The
 race is serialised by `UNIQUE(classes.form_teacher_id)`; the
-pre-INSERT `findTeacherByEmail` is the *application-level* gate for
+pre-INSERT `findTeacherByUlid` is the *application-level* gate for
 the `404 vs 409` distinction but the DB constraint is what makes the
 race race-safe.
 
@@ -368,10 +371,10 @@ This scenario is best run as part of the integration test suite
 # 9.1 Insert a class with restart@example.com (from Scenario 8)
 #     — already there as Class Restart.
 
-# 9.2 Try to insert another class with restart@example.com
+# 9.2 Try to insert another class with the same formTeacher
 curl -s -i -X POST http://localhost:3000/api/v1.0/classes \
   -H "Content-Type: application/json" \
-  -d '{"level":"Primary 2","name":"Class Partial","teacherEmail":"restart@example.com"}'
+  -d '{"level":{"ulid":"01H000000000000000000000B2","name":"Primary 2"},"name":"Class Partial","formTeacher":{"ulid":"01HZX8K2D5Y3J8QF8W9B3N5P7T","name":"Restart Teacher"}}'
 # Expect: HTTP/1.1 409 Conflict
 # Body:   {"error":"Teacher already assigned"}
 

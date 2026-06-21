@@ -199,7 +199,9 @@ Impact Report.
   `.required()` cover the spec's validation rules cleanly: email format,
   8-digit `/^\d{8}$/` contact number (digits-only, no
   leading-digit restriction — per FR-004, Session 2026-06-21),
-  subject in the seeded list.
+  nested `subject.ulid` against the active `uq_subjects_ulid` set
+  (per Clarifications, Session 2026-06-20 (POST/GET reference object
+  shape)).
 - Joi schemas live as plain `.ts` modules (per Principle VII), imported by the
   route handler, and unit-tested directly (no live HTTP).
 
@@ -227,7 +229,7 @@ spec.
   the repo (`ls .requirements/` returns "No such file or directory").
 - The Clarifications (Session 2026-06-18) already pinned every numeric / format
   detail the spec is missing: subject type (predefined list, FK), contact number
-  format (8 digits, starts 8/9), duplicate-email status (409), pagination
+  format (8 digits, no leading-digit restriction; matches the regex eight-digit-digits-only, per FR-004 and Clarifications, Session 2026-06-21 which supersedes the previous 8/9-leading rule), duplicate-email status (409), pagination
   (no, ≤ 500), API response time (no new target), cross-cutting 415/503.
 - The Figma design paths in the spec (`./designs/teachers/...`) likewise do not
   exist; the spec already documented that the Filled State mirrors the Classes

@@ -12,15 +12,19 @@ two client-rendered pages (Add Teacher form, Teachers list) and three API endpoi
 backed by a MySQL 8 database managed through typeORM entities and repositories.
 All request bodies and query parameters are validated by Joi schemas that mirror
 the typeORM columns field-for-field (Principle VII). The teachers reference the
-`subjects` reference list via a foreign key. The `subjects` and `levels` reference
-lists are populated by the user against the user-prepared MySQL container (per
-`003-backend-api-db` Clarifications, Session 2026-06-21, FR-016); there is no
-typeORM migration set, no `npm run seed` step, and no boot-time seeder in
-Stage 1 — the application is read/write at runtime only. The whole stack (app +
-MySQL) runs in Docker via `docker compose up`, with the schema prepared by the
-user separately. All Stage 1 endpoints are exposed under the version prefix
-`/api/v1.0/` (per `003-backend-api-db` Clarifications, Session 2026-06-21,
-FR-022).
+`subjects` reference list via a foreign key; per the 2026-06-20
+(POST/GET reference object shape) clarification (owned by `003-backend-api-db`,
+propagated by reference into this spec), the wire-format reference is a nested
+`{ ulid, name }` object — `subject.ulid` is the server-side lookup key resolved
+via `uq_subjects_ulid`; `subject.name` is a display hint and is ignored
+server-side. The `subjects` and `levels` reference lists are populated by the
+user against the user-prepared MySQL container (per `003-backend-api-db`
+Clarifications, Session 2026-06-21, FR-016); there is no typeORM migration set,
+no `npm run seed` step, and no boot-time seeder in Stage 1 — the application is
+read/write at runtime only. The whole stack (app + MySQL) runs in Docker via
+`docker compose up`, with the schema prepared by the user separately. All Stage
+1 endpoints are exposed under the version prefix `/api/v1.0/` (per
+`003-backend-api-db` Clarifications, Session 2026-06-21, FR-022).
 
 ## Technical Context
 
@@ -83,7 +87,7 @@ see `.specify/memory/constitution.md` v2.3.0 Sync Impact Report and the
 | IV. Single Role: Administrator | ✅ Pass | No auth, no roles, no session; the only user is the Administrator, matching the spec. |
 | V. Simplicity (YAGNI) | ✅ Pass | No abstractions ahead of the spec. No DTOs, no repositories class wrappers, no service layer, no DI container. The smallest Next.js + typeORM + Joi + Ant Design + Tailwind setup that satisfies the spec. The "extra unknown fields" policy and any other low-impact decisions are deferred to the `simplify` skill if they come up at implementation time. |
 | VI. Functional-First (Classes Only When Necessary) | ✅ Pass | Server code is small modules of pure functions (`lib/validation/*.ts`, `lib/api/response.ts`, `app/api/*/route.ts`). React code uses function components and hooks. The only classes are typeORM entity classes (framework-mandated). |
-| VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Teacher` mirrors the typeORM entity column-for-column (same required-ness, same length bounds, same regex). `Joi.string().email().required()`, `Joi.string().pattern(/^\d{8}$/).required()` for contact (exactly 8 digits, no leading-digit restriction — per FR-004, Session 2026-06-21), `Joi.string().valid(...).required()` for subject. The `ulid` column is server-generated (per FR-021) and is NOT part of any request body schema — it is never accepted from the client. |
+| VII. Joi Schema Validation | ✅ Pass | Every request body and query parameter is validated by Joi before any typeORM call. The Joi schema for `Teacher` mirrors the typeORM entity column-for-column (same required-ness, same length bounds, same regex). `Joi.string().email().required()`, `Joi.string().pattern(/^\d{8}$/).required()` for contact (exactly 8 digits, no leading-digit restriction — per FR-004, Session 2026-06-21), `Joi.object({ ulid: ..., name: ... }).required()` for `subject` (the nested `{ ulid, name }` reference object per Clarifications, Session 2026-06-20 (POST/GET reference object shape); `subject.ulid` is the server-side lookup key resolved via `uq_subjects_ulid`, `subject.name` is a display hint and is ignored). The `ulid` column is server-generated (per FR-021) and is NOT part of any request body schema — it is never accepted from the client. |
 | VIII. UI Quality — Self-Explanatory, Reusable, Simple | ✅ Pass | UI components are function components, named after their role (`TeacherForm`, `TeacherTable`, `FormField`, `EmptyState`, `ErrorState`, `LoadingState`), with explicit typed props. Composed from **Ant Design (`antd`)** primitives and styled with **Tailwind CSS** utility classes (per Constitution v2.3.0) — no feature-specific hard-coding. No three-layer indirection to render one button. The `ulid` field (per FR-021) is displayed as a monospace string in any UI surface that needs the row handle (e.g., the row key for the Ant Design `Table`). |
 
 **Stage Scope compliance** (per Constitution → Stage Scope):
@@ -148,7 +152,7 @@ lib/
 │       ├── Teacher.ts               # @Entity() Teacher class (+ ulid CHAR(26) UNIQUE column per FR-021; @BeforeInsert hook calls generateUlid())
 │       └── Subject.ts               # @Entity() Subject class (+ ulid CHAR(26) UNIQUE column per FR-021; @BeforeInsert hook calls generateUlid())
 ├── validation/
-│   ├── teacher.ts                   # Joi schema for POST /api/v1.0/teachers body
+│   ├── teacher.ts                   # Joi schema for POST /api/v1.0/teachers body (subject is nested { ulid, name } — ulid is the lookup key against uq_subjects_ulid; name is a display hint, ignored)
 │   └── subject.ts                   # Joi schema for GET /api/v1.0/subjects query (none required)
 ├── api/
 │   ├── response.ts                  # errorEnvelope(), jsonError(), jsonOk() pure functions
