@@ -1,72 +1,128 @@
-import { describe, it, expect, beforeAll, vi } from "vitest";
+import { describe, it, expect } from "vitest";
+import { createClassRequestSchema } from "@/lib/validation/class";
 
-vi.mock("@/lib/db/repositories/level", () => ({
-  getActiveLevelNames: async () => ["Primary 1", "Primary 2", "Secondary 1"],
-  listActiveLevels: async () => [],
-}));
+/**
+ * Unit tests for the `POST /api/v1.0/classes` Joi request schema.
+ *
+ * Per `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
+ * (POST/GET reference object shape), the `level` and `formTeacher`
+ * fields on the wire are nested `{ ulid, name? }` objects (not flat
+ * strings). The `ulid` fields are the server-side lookup keys
+ * resolved against `uq_levels_ulid` / `uq_teachers_ulid`; the nested
+ * `name` fields are display hints and are ignored server-side.
+ *
+ * The previous `teacherEmail` flat string is replaced by the nested
+ * `formTeacher: { ulid, name? }` object.
+ */
 
-import { buildCreateClassSchema } from "@/lib/validation/class";
-
-describe("buildCreateClassSchema", () => {
-  let schema: Awaited<ReturnType<typeof buildCreateClassSchema>>;
-  beforeAll(async () => {
-    schema = await buildCreateClassSchema();
-  });
-
-  it("accepts a valid class payload", () => {
-    const { value, error } = schema.validate({
-      level: "Primary 1",
+describe("createClassRequestSchema", () => {
+  it("accepts a valid class payload with nested level + formTeacher", () => {
+    const { value, error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1", name: "Primary 1" },
       name: "Class 1A",
-      teacherEmail: "mary@example.com",
+      formTeacher: {
+        ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R",
+        name: "Alice Tan",
+      },
     });
     expect(error).toBeUndefined();
     expect(value).toMatchObject({
-      level: "Primary 1",
+      level: { ulid: "01H000000000000000000000B1", name: "Primary 1" },
       name: "Class 1A",
-      teacherEmail: "mary@example.com",
+      formTeacher: {
+        ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R",
+        name: "Alice Tan",
+      },
     });
   });
 
-  it("rejects an unknown level", () => {
-    const { error } = schema.validate({
-      level: "Kindergarten",
-      name: "Class K1",
-      teacherEmail: "mary@example.com",
+  it("accepts reference objects without an optional name (display hint)", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
     });
-    expect(error?.details[0]?.path).toContain("level");
+    expect(error).toBeUndefined();
+  });
+
+  it("rejects a missing level.ulid", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { name: "Primary 1" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
+    });
+    expect(error?.details[0]?.path.join(".")).toContain("level.ulid");
+  });
+
+  it("rejects a level.ulid of wrong length", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "short" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
+    });
+    expect(error?.details[0]?.path.join(".")).toContain("level.ulid");
+  });
+
+  it("rejects a missing formTeacher.ulid", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      formTeacher: { name: "Alice Tan" },
+    });
+    expect(error?.details[0]?.path.join(".")).toContain(
+      "formTeacher.ulid",
+    );
+  });
+
+  it("rejects a formTeacher.ulid with invalid Crockford Base32 characters", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01H00000000000000000000OUL1" },
+    });
+    expect(error?.details[0]?.path.join(".")).toContain(
+      "formTeacher.ulid",
+    );
   });
 
   it("rejects missing name", () => {
-    const { error } = schema.validate({
-      level: "Primary 1",
-      teacherEmail: "mary@example.com",
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
     });
     expect(error?.details[0]?.path).toContain("name");
   });
 
-  it("rejects missing teacherEmail", () => {
-    const { error } = schema.validate({
-      level: "Primary 1",
+  it("rejects unknown extra top-level fields", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
       name: "Class 1A",
-    });
-    expect(error?.details[0]?.path).toContain("teacherEmail");
-  });
-
-  it("rejects an invalid teacherEmail format", () => {
-    const { error } = schema.validate({
-      level: "Primary 1",
-      name: "Class 1A",
-      teacherEmail: "not-an-email",
-    });
-    expect(error?.details[0]?.path).toContain("teacherEmail");
-  });
-
-  it("rejects unknown extra fields", () => {
-    const { error } = schema.validate({
-      level: "Primary 1",
-      name: "Class 1A",
-      teacherEmail: "mary@example.com",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
       extra: "nope",
+    });
+    expect(error).toBeDefined();
+  });
+
+  it("rejects unknown extra fields inside level / formTeacher objects", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: {
+        ulid: "01H000000000000000000000B1",
+        label: "wrong field name",
+      },
+      name: "Class 1A",
+      formTeacher: {
+        ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R",
+        email: "alice@example.com",
+      },
+    });
+    expect(error).toBeDefined();
+  });
+
+  it("rejects the legacy flat teacherEmail field", () => {
+    const { error } = createClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      teacherEmail: "alice@example.com",
     });
     expect(error).toBeDefined();
   });

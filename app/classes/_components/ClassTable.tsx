@@ -1,10 +1,17 @@
 "use client";
 
+/**
+ * Wire shape of a class entry in `GET /api/v1.0/classes` (per
+ * `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
+ * — POST/GET reference object shape). `level` and `formTeacher`
+ * are nested `{ ulid, name }` objects; the table renders the
+ * authoritative `.name` fields.
+ */
 export interface ClassRow {
   ulid: string;
-  level: string;
+  level: { ulid: string; name: string };
   name: string;
-  formTeacher: { name: string };
+  formTeacher: { ulid: string; name: string };
 }
 
 export function ClassTable({ classes }: { classes: ClassRow[] }) {
@@ -22,11 +29,11 @@ export function ClassTable({ classes }: { classes: ClassRow[] }) {
         <tbody>
           {classes.map((c, idx) => (
             <tr
-              key={c.name}
+              key={c.ulid}
               className="border-b border-surface-border last:border-0"
             >
               <td className="px-4 py-3">{idx + 1}</td>
-              <td className="px-4 py-3">{c.level}</td>
+              <td className="px-4 py-3">{c.level.name}</td>
               <td className="px-4 py-3">{c.name}</td>
               <td className="px-4 py-3">{c.formTeacher.name}</td>
             </tr>

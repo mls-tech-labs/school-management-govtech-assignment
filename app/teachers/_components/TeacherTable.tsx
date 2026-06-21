@@ -1,9 +1,16 @@
 "use client";
 
+/**
+ * Wire shape of a teacher entry in
+ * `GET /api/v1.0/teachers` (per
+ * `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
+ * — POST/GET reference object shape). `subject` is a nested
+ * `{ ulid, name }` object; the table renders `subject.name`.
+ */
 export interface TeacherRow {
   ulid: string;
   name: string;
-  subject: string;
+  subject: { ulid: string; name: string };
   email: string;
   contactNumber: string;
 }
@@ -29,12 +36,12 @@ export function TeacherTable({ teachers }: TeacherTableProps) {
         <tbody>
           {teachers.map((t, idx) => (
             <tr
-              key={t.email}
+              key={t.ulid}
               className="border-b border-surface-border last:border-0"
             >
               <td className="px-4 py-3">{idx + 1}</td>
               <td className="px-4 py-3">{t.name}</td>
-              <td className="px-4 py-3">{t.subject}</td>
+              <td className="px-4 py-3">{t.subject.name}</td>
               <td className="px-4 py-3">{t.email}</td>
               <td className="px-4 py-3 whitespace-nowrap">{fmt(t.contactNumber)}</td>
             </tr>

@@ -1,13 +1,16 @@
 "use client";
 
-export interface FormTeacherOption {
-  value: string;
-  label: string;
-}
-
+/**
+ * Form Teacher dropdown data shape — the row carries `ulid` per
+ * FR-021 so the Add Class form can build the nested
+ * `formTeacher: { ulid, name }` body that the API expects (per
+ * Clarifications, Session 2026-06-20). The `value` is the teacher's
+ * `ulid` (the server-side lookup key); the option label is the
+ * teacher's `name` (the display value).
+ */
 export interface FormTeacherSelectProps {
-  teachers: { email: string; name: string }[];
-  value: string;
+  teachers: { ulid: string; name: string }[];
+  value: string; // teacher.ulid
   onChange: (v: string) => void;
   error?: string;
 }
@@ -24,7 +27,7 @@ export function FormTeacherSelect({
     return (
       <div className="mb-4">
         <label
-          htmlFor="teacherEmail"
+          htmlFor="formTeacher"
           className="block font-semibold mb-1"
         >
           Form Teacher
@@ -45,20 +48,20 @@ export function FormTeacherSelect({
   return (
     <div className="mb-4">
       <label
-        htmlFor="teacherEmail"
+        htmlFor="formTeacher"
         className="block font-semibold mb-1"
       >
         Form Teacher
       </label>
       <div className="relative">
         <select
-          id="teacherEmail"
-          name="teacherEmail"
+          id="formTeacher"
+          name="formTeacher"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           required
           aria-invalid={isInvalid || undefined}
-          aria-describedby={error ? "teacherEmail-error" : undefined}
+          aria-describedby={error ? "formTeacher-error" : undefined}
           className={
             "w-full px-3 py-2 pr-9 border rounded bg-surface appearance-none focus:outline-none focus:ring-2 focus:ring-primary-600 " +
             (isInvalid
@@ -71,7 +74,7 @@ export function FormTeacherSelect({
             Assign a form teacher
           </option>
           {teachers.map((t) => (
-            <option key={t.email} value={t.email}>
+            <option key={t.ulid} value={t.ulid}>
               {t.name}
             </option>
           ))}
@@ -85,7 +88,7 @@ export function FormTeacherSelect({
       </div>
       {isInvalid ? (
         <div
-          id="teacherEmail-error"
+          id="formTeacher-error"
           className="text-danger text-sm mt-1"
           role="alert"
         >

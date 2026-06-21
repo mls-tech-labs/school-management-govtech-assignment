@@ -6,7 +6,7 @@ import { Button } from "@/components/Button";
 import { Select } from "@/components/Select";
 
 export interface TeacherFormProps {
-  subjects: { name: string; active: boolean }[];
+  subjects: { ulid: string; name: string; active: boolean }[];
 }
 
 function mapError(field: string, message: string): string {
@@ -17,7 +17,11 @@ function mapError(field: string, message: string): string {
   if (field === "contactNumber" || lower.includes("contactnumber") || lower.includes("pattern")) {
     return "This work contact number is invalid.";
   }
-  if (field === "subject" || lower.includes("subject")) {
+  if (
+    field === "subject" ||
+    field === "subject.ulid" ||
+    lower.includes("subject")
+  ) {
     return "Please select a valid subject.";
   }
   if (field === "name" || lower.includes("name")) {
@@ -26,6 +30,14 @@ function mapError(field: string, message: string): string {
   return message;
 }
 
+/**
+ * Add Teacher form. The wire shape submitted to
+ * `POST /api/v1.0/teachers` is the nested `{ ulid, name }` shape
+ * per `003-backend-api-db/spec.md` Clarifications, Session
+ * 2026-06-20 (POST/GET reference object shape). The form keeps a
+ * flat `subject` (the user picks a subject by name in the dropdown)
+ * and looks up the corresponding `ulid` at submit time.
+ */
 export function TeacherForm({ subjects }: TeacherFormProps) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -36,7 +48,10 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const subjectOptions = subjects.map((s) => s.name);
+  // The dropdown shows names; the API wants the nested { ulid, name }
+  // object so the server can resolve by `ulid` against
+  // `uq_subjects_ulid`. We look up the selected subject here.
+  const selectedSubject = subjects.find((s) => s.name === subject);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,10 +59,20 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
     setFormError(null);
     setSubmitting(true);
     try {
+      if (!selectedSubject) {
+        setErrors({ subject: "Please select a valid subject." });
+        setSubmitting(false);
+        return;
+      }
       const res = await fetch("/api/v1.0/teachers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, subject, email, contactNumber }),
+        body: JSON.stringify({
+          name,
+          subject: { ulid: selectedSubject.ulid, name: selectedSubject.name },
+          email,
+          contactNumber,
+        }),
       });
       if (res.status === 201) {
         router.push("/teachers");
@@ -58,10 +83,15 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
         const m = (data.error ?? "").toLowerCase();
         const next: Record<string, string> = {};
         if (m.includes("name")) next.name = mapError("name", data.error ?? "");
-        else if (m.includes("subject")) next.subject = mapError("subject", data.error ?? "");
-        else if (m.includes("email")) next.email = mapError("email", data.error ?? "");
+        else if (m.includes("subject"))
+          next.subject = mapError("subject", data.error ?? "");
+        else if (m.includes("email"))
+          next.email = mapError("email", data.error ?? "");
         else if (m.includes("contactnumber") || m.includes("pattern"))
-          next.contactNumber = mapError("contactNumber", data.error ?? "");
+          next.contactNumber = mapError(
+            "contactNumber",
+            data.error ?? "",
+          );
         else setFormError(data.error ?? "Please review the highlighted fields.");
         setErrors(next);
       } else if (res.status === 409) {
@@ -96,7 +126,7 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
           name="subject"
           value={subject}
           onChange={setSubject}
-          options={subjectOptions}
+          options={subjects.map((s) => s.name)}
           placeholder="Select a subject"
           required
           error={errors.subject}
