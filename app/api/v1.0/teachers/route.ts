@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { jsonOk, jsonError } from "@/lib/api/response";
 import { withApiContract } from "@/lib/api/route";
 import { toApiError } from "@/lib/api/db-error";
+import { withAuth } from "@/lib/auth/middleware";
 import {
   createTeacher,
   listTeachers,
@@ -106,8 +107,8 @@ async function handleGet() {
   }
 }
 
-const post = withApiContract(handlePost);
-const get = withApiContract(handleGet);
+const post = withApiContract(withAuth(handlePost));
+const get = withApiContract(withAuth(handleGet));
 
 export async function POST(req: NextRequest) {
   return post(req);

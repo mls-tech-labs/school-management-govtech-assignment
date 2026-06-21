@@ -5,6 +5,7 @@ import { FormField } from "@/components/FormField";
 import { Button } from "@/components/Button";
 import { FormTeacherSelect } from "./FormTeacherSelect";
 import { LevelSelect } from "./LevelSelect";
+import { getCsrfToken } from "@/lib/security/csrf-client";
 
 /**
  * The Add Class form expects teachers with `ulid` (per
@@ -81,7 +82,10 @@ export function ClassForm({ teachers, levels }: ClassFormProps) {
       }
       const res = await fetch("/api/v1.0/classes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCsrfToken() ?? "",
+        },
         body: JSON.stringify({
           level: { ulid: selectedLevel.ulid, name: selectedLevel.name },
           name,

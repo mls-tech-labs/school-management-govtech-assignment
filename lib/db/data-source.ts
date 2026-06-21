@@ -5,20 +5,22 @@ import { Teacher } from "./entities/Teacher";
 import { Subject } from "./entities/Subject";
 import { Class } from "./entities/Class";
 import { Level } from "./entities/Level";
+import { User } from "./entities/User";
 
 /**
- * typeORM DataSource singleton. **No migration set in Stage 1** (per
- * `specs/003-backend-api-db/spec.md` FR-016, Session 2026-06-21): the
- * MySQL schema, audit columns, `ulid CHAR(26) UNIQUE NOT NULL` column,
- * FK constraints, UNIQUE indexes, and the `subjects` / `levels`
- * reference-list seed data are all created by the user against the
- * user-prepared MySQL container (mirrored in
- * `docker/mysql/init/01-schema-and-seed.sql`).
+ * typeORM DataSource singleton. **No migration set in Stage 1 / 2**
+ * (per `specs/003-backend-api-db/spec.md` FR-016 + the constitution
+ * Stage Scope → Stage 2 Out of Scope migration section): the MySQL
+ * schema, audit columns, `ulid CHAR(26) UNIQUE NOT NULL` column,
+ * FK constraints, UNIQUE indexes, the `subjects` / `levels`
+ * reference-list seed data, AND the `users` table are all created by
+ * the user with their own SQL against the user-prepared MySQL
+ * container (mirrored in `docker/mysql/init/01-schema-and-seed.sql`).
  *
  * The application is **read/write at runtime only** — `docker compose up`
  * brings up the app container, which connects to the existing MySQL.
  * No `migration:run` step runs on boot; the `lib/db/migrations/`
- * directory is out of Stage 1 scope.
+ * directory is out of Stage 1 / Stage 2 scope.
  */
 export const dataSourceOptions = {
   type: "mysql" as const,
@@ -27,7 +29,7 @@ export const dataSourceOptions = {
   username: config.db.user,
   password: config.db.password,
   database: config.db.name,
-  entities: [Teacher, Subject, Class, Level],
+  entities: [Teacher, Subject, Class, Level, User],
   // No `migrations` array — schema is user-prepared per FR-016.
   synchronize: false,
   migrationsRun: false,

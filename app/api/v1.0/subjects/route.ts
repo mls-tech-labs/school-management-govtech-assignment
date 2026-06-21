@@ -1,6 +1,7 @@
 import { jsonOk, jsonError } from "@/lib/api/response";
 import { withApiContract } from "@/lib/api/route";
 import { toApiError } from "@/lib/api/db-error";
+import { withAuth } from "@/lib/auth/middleware";
 import { listActiveSubjects } from "@/lib/db/repositories/subject";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ async function handleGet() {
   }
 }
 
-const get = withApiContract(handleGet);
+const get = withApiContract(withAuth(handleGet));
 export async function GET(req: Request) {
   return get(req as never);
 }

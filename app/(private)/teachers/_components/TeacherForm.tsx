@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FormField } from "@/components/FormField";
 import { Button } from "@/components/Button";
 import { Select } from "@/components/Select";
+import { getCsrfToken } from "@/lib/security/csrf-client";
 
 export interface TeacherFormProps {
   subjects: { ulid: string; name: string; active: boolean }[];
@@ -66,7 +67,10 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
       }
       const res = await fetch("/api/v1.0/teachers", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCsrfToken() ?? "",
+        },
         body: JSON.stringify({
           name,
           subject: { ulid: selectedSubject.ulid, name: selectedSubject.name },

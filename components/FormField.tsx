@@ -5,7 +5,7 @@ export interface FormFieldProps {
   name: string;
   value: string;
   onChange: (v: string) => void;
-  type?: "text" | "email" | "tel" | "number";
+  type?: "text" | "email" | "tel" | "number"| "password";
   placeholder?: string;
   required?: boolean;
   error?: string;
