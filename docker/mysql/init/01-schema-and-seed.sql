@@ -6,18 +6,22 @@
 -- .sql file in /docker-entrypoint-initdb.d alphabetically on a fresh data dir).
 --
 -- Per `specs/003-backend-api-db/spec.md` FR-016 (Session 2026-06-21), this SQL
--- file IS the canonical source of truth for the Stage 1 schema. The user prepares
--- MySQL manually — there is no typeORM migration set, no `migration:run` script,
--- no `migration` one-shot service in `docker-compose.yml`, and the application
--- is read/write at runtime only.
+-- file IS the canonical source of truth for the Stage 1 / Stage 2 schema. The
+-- user prepares MySQL manually — there is no typeORM migration set, no
+-- `migration:run` script, no `migration` one-shot service in `docker-compose.yml`,
+-- and the application is read/write at runtime only.
 --
--- Tables (4 total) — see `lib/db/entities/*.ts` for the typeORM mapping:
+-- Tables (5 total) — see `lib/db/entities/*.ts` for the typeORM mapping:
 --   1. subjects   — reference list (read-only in Stage 1)             [001-teachers]
 --   2. teachers   — id (PK), name, subject_id (FK→subjects.id), email UNIQUE,
 --                    contact_number, ulid CHAR(26) UNIQUE              [001-teachers]
 --   3. levels     — reference list (read-only in Stage 1)             [002-classes]
 --   4. classes    — id (PK), level_id (FK→levels.id), name UNIQUE,
 --                    form_teacher_id (FK→teachers.id, UNIQUE), ulid    [002-classes]
+--   5. users      — id (PK), username UNIQUE, password VARCHAR(255)
+--                    (argon2id envelope), salt VARCHAR(255) (standalone
+--                    base64 nonce — DISTINCT column from `password`),
+--                    active BOOLEAN, ulid CHAR(26) UNIQUE             [004-user-auth]
 --
 -- Audit columns (per FR-018 — Session 2026-06-19):
 --   Every table carries the same six audit columns plus the cross-cutting ULID
@@ -31,8 +35,9 @@
 --     version       INT              NOT NULL DEFAULT 1
 --     ulid          CHAR(26)         NOT NULL  (UNIQUE per FR-021)
 --   `id` is the canonical PK on every table. The natural keys
---   (subjects.name, teachers.email, levels.name, classes.name) are preserved as
---   UNIQUE NOT NULL so the Stage 1 public API can keep surfacing them (FR-020).
+--   (subjects.name, teachers.email, levels.name, classes.name, users.username)
+--   are preserved as UNIQUE NOT NULL so the Stage 1 / Stage 2 public API can
+--   keep surfacing them (FR-020).
 --
 -- Integrity rules enforced at the DB layer (per FR-006..FR-009a, FR-018, FR-019,
 -- FR-021):
@@ -40,10 +45,12 @@
 --   * PRIMARY KEY (teachers.id)  — surrogate PK per FR-018
 --   * PRIMARY KEY (levels.id)    — surrogate PK per FR-018
 --   * PRIMARY KEY (classes.id)   — surrogate PK per FR-018
---   * UNIQUE(subjects.name), UNIQUE(teachers.email), UNIQUE(levels.name)
+--   * PRIMARY KEY (users.id)     — surrogate PK per FR-018             [004-user-auth]
+--   * UNIQUE(subjects.name), UNIQUE(teachers.email), UNIQUE(levels.name),
+--     UNIQUE(users.username)                                            [004-user-auth]
 --   * UNIQUE(classes.name)                                   — global, not composite
 --   * UNIQUE(classes.form_teacher_id)                        — "at most one class per teacher"
---   * UNIQUE(<table>.ulid) for all four tables               — cross-cutting row handle
+--   * UNIQUE(<table>.ulid) for all five tables               — cross-cutting row handle
 --   * FK(teachers.subject_id)          REFERENCES subjects(id)         ON UPDATE CASCADE ON DELETE RESTRICT
 --   * FK(classes.level_id)             REFERENCES levels(id)           ON UPDATE CASCADE ON DELETE RESTRICT
 --   * FK(classes.form_teacher_id)      REFERENCES teachers(id)         ON UPDATE CASCADE ON DELETE RESTRICT
@@ -59,7 +66,7 @@ CREATE DATABASE IF NOT EXISTS `edu_inst`
 USE `edu_inst`;
 
 -- -----------------------------------------------------------------------------
--- 1. subjects  (reference list — seeded once; id is the surrogate PK, name is UNIQUE NOT NULL)
+-- 1. subjects
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `subjects` (
   `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -88,7 +95,7 @@ INSERT IGNORE INTO `subjects` (`id`, `name`, `active`, `ulid`) VALUES
   (9, 'Character and Citizenship Education', TRUE, '01H000000000000000000000A9');
 
 -- -----------------------------------------------------------------------------
--- 2. teachers  (PK = id surrogate; FK subject_id → subjects.id ; UNIQUE email as natural key)
+-- 2. teachers
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `teachers` (
   `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -112,7 +119,7 @@ CREATE TABLE IF NOT EXISTS `teachers` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- -----------------------------------------------------------------------------
--- 3. levels  (reference list — seeded once; id is the surrogate PK, name is UNIQUE NOT NULL)
+-- 3. levels
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `levels` (
   `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -138,7 +145,7 @@ INSERT IGNORE INTO `levels` (`id`, `name`, `active`, `ulid`) VALUES
   (6,  'Primary 6',   TRUE, '01H000000000000000000000B6');
 
 -- -----------------------------------------------------------------------------
--- 4. classes  (PK = id surrogate; FKs to levels + teachers via id; UNIQUE name and form_teacher_id)
+-- 4. classes
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `classes` (
   `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -165,13 +172,13 @@ CREATE TABLE IF NOT EXISTS `classes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- -----------------------------------------------------------------------------
--- 5. users  (reference list — seeded once; id is the surrogate PK, username is UNIQUE NOT NULL)
+-- 5. users
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `users` (
   `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `username`        VARCHAR(64)     NOT NULL,
-  `password`      VARCHAR(255)         NOT NULL, 
-  `salt`      VARCHAR(255)         NOT NULL,
+  `username`    VARCHAR(64)     NOT NULL,
+  `password`    VARCHAR(255)    NOT NULL,
+  `salt`        VARCHAR(255)    NOT NULL,
   `active`      BOOLEAN         NOT NULL DEFAULT TRUE,
   `created_at`  DATETIME(6)     NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `created_by`  VARCHAR(64)     NOT NULL DEFAULT 'system',
@@ -181,29 +188,23 @@ CREATE TABLE IF NOT EXISTS `users` (
   `ulid`        CHAR(26)        NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_users_username` (`username`),
-  UNIQUE KEY `uq_users_ulid` (`ulid`)
+  UNIQUE KEY `uq_users_ulid` (`ulid`),
+  KEY `idx_users_active` (`active`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-INSERT IGNORE INTO `users` (`id`, `username`,`password`, `salt`, `active`, `ulid`) VALUES
-  (1,  'admin', 'password_hash','salt',  TRUE, '01H000000000000000000000C1');
-
 -- =============================================================================
--- 6. SECURITY & USER PRIVILEGES (Automated Setup)
+-- 6. SECURITY & USER PRIVILEGES
 -- =============================================================================
+CREATE USER IF NOT EXISTS 'db_admin'@'%' IDENTIFIED BY '{DB_USER_PASSWORD}';
 
--- Ensure the 'admin' user account exists with a wildcard network host assignment
-CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'rootpass';
-
--- Hand the 'admin' user full keys to read/write inside the edu_inst room
-GRANT ALL PRIVILEGES ON `edu_inst`.* TO 'admin'@'%';
-
--- Flush the privilege tables to force MySQL to reload the keycard database instantly
+GRANT ALL PRIVILEGES ON `edu_inst`.* TO 'db_admin'@'%';
 FLUSH PRIVILEGES;
 
 -- =============================================================================
--- Verification (informational — runs on every boot but produces no side effects)
+-- Verification
 -- =============================================================================
 SELECT 'subjects' AS table_name, COUNT(*) AS rows_seeded FROM subjects
 UNION ALL SELECT 'levels',   COUNT(*) FROM levels
 UNION ALL SELECT 'teachers', COUNT(*) FROM teachers
-UNION ALL SELECT 'classes',  COUNT(*) FROM classes;
+UNION ALL SELECT 'classes',  COUNT(*) FROM classes
+UNION ALL SELECT 'users',    COUNT(*) FROM users;
