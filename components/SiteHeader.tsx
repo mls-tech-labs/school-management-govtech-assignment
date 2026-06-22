@@ -9,39 +9,14 @@ const NAV = [
   { href: "/teachers", label: "Teachers" },
 ] as const;
 
-/**
- * Site-wide header. Three responsibilities:
- *
- *   1. Auth-aware visibility — the NAV (Classes / Teachers) and
- *      the "Sign out" button are BOTH hidden until `/api/v1.0/me`
- *      returns 200. On the `/login` page (and any future public
- *      page) the header shows ONLY the brand. This prevents a
- *      stale nav from linking to auth-gated routes while the
- *      user is signed out.
- *
- *   2. Reactive re-check on every navigation — the `/me` check
- *      re-runs whenever `usePathname()` changes, so the header
- *      updates immediately when the user signs in (login page
- *      navigates to `/`) or signs out (sign-out button navigates
- *      to `/login`). Without the `[pathname]` dep, the Sign Out
- *      button only appeared after a manual page refresh.
- *
- *   3. Layout — `[brand] [nav]` on the LEFT cluster, `Sign out`
- *      on the RIGHT cluster. The parent uses `justify-between`
- *      with two flex children so the right cluster stays
- *      hard-pinned to the far right regardless of nav length.
- */
+// Re-runs /me on every pathname change so the header updates when the
+// user signs in/out without a manual refresh.
 export function SiteHeader() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Re-check the session on every route change. The previous
-  // version had `[]` deps, which meant the check ran only on
-  // mount — and since SiteHeader lives in the root layout, it
-  // doesn't remount on navigation. Switching the dep to
-  // `[pathname]` makes the header reactive.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -81,12 +56,8 @@ export function SiteHeader() {
   return (
     <header className="border-b border-surface-border bg-surface">
       <div className="container-page flex items-center justify-between py-3 px-4">
-        {/* LEFT cluster: brand + (when authed) nav links. */}
         <div className="flex items-center gap-8">
-          <Link
-            href="/teachers"
-            className="flex items-center gap-2 font-bold"
-          >
+          <Link href="/teachers" className="flex items-center gap-2 font-bold">
             <span aria-hidden>🎓</span> School Portal
           </Link>
 
@@ -115,10 +86,6 @@ export function SiteHeader() {
           ) : null}
         </div>
 
-        {/* RIGHT cluster: Sign out button. Same `authed === true`
-            gate as the left cluster — both flash together so the
-            header never shows a half-state (e.g. nav without
-            sign out, or vice versa). */}
         {authed === true ? (
           <button
             type="button"

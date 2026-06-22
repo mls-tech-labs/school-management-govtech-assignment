@@ -7,27 +7,9 @@ import { findUserById } from "@/lib/db/repositories/user";
 
 export const dynamic = "force-dynamic";
 
-/**
- * `GET /api/v1.0/me` — the bootstrap handshake used by the React
- * route guard (`lib/auth/route-guard.tsx`). EXEMPT from `withAuth`
- * (per spec FR-011) — the handler does its own session lookup.
- *
- * Response shape (per spec FR-009):
- *   { username, active, ulid, createdAt }
- *
- * The shape is LOCKED DOWN to exactly four top-level fields — no
- * `id`, no audit columns (per FR-020).
- *
- * Failure modes — all return `401 Unauthorized` with the same
- * `{ "error": "Unauthorized" }` envelope (per spec Edge Cases
- * "missing cookie / unknown cookie / expired cookie / Redis error"
- * are INDISTINGUISHABLE from the client's perspective):
- *   - No cookie.
- *   - Unknown cookie (forged / expired).
- *   - User row not found (referential drift — the session points
- *     to a deleted user).
- *   - Redis error.
- */
+// EXEMPT from `withAuth` — does its own session lookup. Returns 401 for
+// every miss (no cookie / unknown cookie / expired cookie / Redis error)
+// so they are indistinguishable to the client.
 async function handleMe(req: NextRequest): Promise<Response> {
   const sessionId = readSessionCookie(req);
   if (!sessionId) return jsonError(401, "Unauthorized");
@@ -36,14 +18,10 @@ async function handleMe(req: NextRequest): Promise<Response> {
   try {
     record = await getSession(sessionId);
   } catch (err) {
-    // Per spec Edge Cases, Redis errors are indistinguishable from
-    // a missing cookie at this layer — return 401 so the SPA
-    // redirects to /login (which then attempts its own lookup).
     // eslint-disable-next-line no-console
     console.error("[GET /api/v1.0/me] session lookup failed", err);
     return jsonError(401, "Unauthorized");
   }
-
   if (record === null) return jsonError(401, "Unauthorized");
 
   let user;
@@ -54,10 +32,9 @@ async function handleMe(req: NextRequest): Promise<Response> {
     console.error("[GET /api/v1.0/me] user lookup failed", err);
     return jsonError(401, "Unauthorized");
   }
-
   if (user === null) return jsonError(401, "Unauthorized");
 
-  // Exactly four top-level fields per FR-009 + FR-020.
+  // Exactly four top-level fields — no id, no audit columns.
   return jsonOk({
     username: user.username,
     active: user.active,
@@ -67,7 +44,6 @@ async function handleMe(req: NextRequest): Promise<Response> {
 }
 
 const get = withApiContract(handleMe);
-
 export async function GET(req: NextRequest): Promise<Response> {
   return get(req);
 }

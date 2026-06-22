@@ -5,23 +5,13 @@ export interface FormFieldProps {
   name: string;
   value: string;
   onChange: (v: string) => void;
-  type?: "text" | "email" | "tel" | "number"| "password";
+  type?: "text" | "email" | "tel" | "number" | "password";
   placeholder?: string;
   required?: boolean;
   error?: string;
   autoComplete?: string;
 }
 
-/**
- * Shared, feature-agnostic form field. Plain HTML `<input>` with
- * Tailwind utility classes — matches the Add Teacher / Add Class
- * designs (label above input, red border on error, small red error
- * text directly below the input).
- *
- * Per Principle VIII (Self-Explanatory, Reusable, Simple), this component
- * has no feature-specific knowledge — `TeacherForm` and `ClassForm` are
- * the only callers, both passing plain prop values.
- */
 export function FormField({
   label,
   name,

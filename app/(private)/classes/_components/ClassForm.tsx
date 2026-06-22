@@ -8,17 +8,6 @@ import { FormTeacherSelect } from "./FormTeacherSelect";
 import { LevelSelect } from "./LevelSelect";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
-/**
- * ClassForm — used by both the Add Class flow and the Edit Class flow.
- * The presence of `initialValues` switches the form into edit mode
- * (gated by the presence of the `[ulid]` path parameter on the edit
- * page). In edit mode:
- *   - The fields are pre-populated from `initialValues`.
- *   - The submit handler dispatches PUT (not POST).
- *   - The form captures `modifiedAt` (the row's GET-load
- *     `modified_at` value) so the PUT 200 `previousModifiedAt` can be
- *     compared for the concurrent-edit toast (per FR-016).
- */
 export interface ClassFormProps {
   teachers: { ulid: string; name: string }[];
   levels: { ulid: string; name: string; active: boolean }[];
@@ -27,32 +16,19 @@ export interface ClassFormProps {
     name: string;
     level: { ulid: string; name: string };
     formTeacher: { ulid: string; name: string };
-    /** The `modified_at` value the form captured on mount (ISO string). */
+    /** Captured on mount — used to detect concurrent edits in PUT 200. */
     modifiedAt?: string;
   };
 }
 
-function mapError(field: string, message: string): string {
-  const lower = message.toLowerCase();
-  if (
-    field === "level" ||
-    field === "level.ulid" ||
-    lower.includes("level")
-  ) {
-    return "Please select a valid class level.";
+function matchFieldError(message: string): [string, string] | null {
+  const m = message.toLowerCase();
+  if (m.includes("level")) return ["level", "Please select a valid class level."];
+  if (m.includes("name")) return ["name", "Class name is required."];
+  if (m.includes("formteacher") || m.includes("teacher")) {
+    return ["formTeacher", "Please select a valid teacher."];
   }
-  if (field === "name" || lower.includes("name")) {
-    return "Class name is required.";
-  }
-  if (
-    field === "formTeacher" ||
-    field === "formTeacher.ulid" ||
-    lower.includes("formteacher") ||
-    lower.includes("teacher")
-  ) {
-    return "Please select a valid teacher.";
-  }
-  return message;
+  return null;
 }
 
 export function ClassForm({ teachers, levels, initialValues }: ClassFormProps) {
@@ -67,7 +43,6 @@ export function ClassForm({ teachers, levels, initialValues }: ClassFormProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Lookup the selected row so we can build the nested wire payload.
   const selectedLevel = levels.find((l) => l.name === level);
   const selectedTeacher = teachers.find((t) => t.ulid === formTeacher);
 
@@ -83,9 +58,7 @@ export function ClassForm({ teachers, levels, initialValues }: ClassFormProps) {
         return;
       }
       if (!selectedTeacher) {
-        setErrors({
-          formTeacher: "Please select a valid teacher.",
-        });
+        setErrors({ formTeacher: "Please select a valid teacher." });
         setSubmitting(false);
         return;
       }
@@ -135,38 +108,27 @@ export function ClassForm({ teachers, levels, initialValues }: ClassFormProps) {
       }
       const data: { error?: string } = await res.json().catch(() => ({}));
       if (res.status === 400) {
-        const m = (data.error ?? "").toLowerCase();
-        const next: Record<string, string> = {};
-        if (m.includes("level")) next.level = mapError("level", data.error ?? "");
-        else if (m.includes("name"))
-          next.name = mapError("name", data.error ?? "");
-        else if (
-          m.includes("formteacher") ||
-          m.includes("teacher")
-        )
-          next.formTeacher = mapError(
-            "formTeacher",
-            data.error ?? "",
-          );
-        else setFormError(data.error ?? "Please review the highlighted fields.");
-        setErrors(next);
+        const match = matchFieldError(data.error ?? "");
+        if (match) {
+          const [field, message] = match;
+          setErrors({ [field]: message });
+        } else {
+          setFormError(data.error ?? "Please review the highlighted fields.");
+        }
       } else if (res.status === 404) {
         if ((data.error ?? "").toLowerCase().includes("teacher")) {
-          setErrors({
-            formTeacher: "Teacher not found.",
-          });
+          setErrors({ formTeacher: "Teacher not found." });
         } else {
           setFormError("Class not found. It may have been deleted.");
         }
       } else if (res.status === 409) {
-        // PUT path: 409 is duplicate name or form-teacher collision.
+        // PUT path: 409 = duplicate name or form-teacher collision.
         const m = (data.error ?? "").toLowerCase();
         if (m.includes("name")) {
           setErrors({ name: "Class name already in use." });
         } else if (m.includes("formteacher") || m.includes("assigned") || m.includes("teacher")) {
           setErrors({
-            formTeacher:
-              "This teacher is already the form teacher of another class.",
+            formTeacher: "This teacher is already the form teacher of another class.",
           });
         } else {
           setFormError(data.error ?? "This class conflicts with an existing record.");
@@ -219,12 +181,8 @@ export function ClassForm({ teachers, levels, initialValues }: ClassFormProps) {
         </Button>
         <Button type="submit" variant="primary" disabled={submitDisabled}>
           {submitting
-            ? isEdit
-              ? "Saving…"
-              : "Adding…"
-            : isEdit
-              ? "Save Class"
-              : "Add Class"}
+            ? isEdit ? "Saving…" : "Adding…"
+            : isEdit ? "Save Class" : "Add Class"}
         </Button>
       </div>
     </form>

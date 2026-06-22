@@ -5,29 +5,6 @@ import { App, Dropdown } from "antd";
 import type { MenuProps } from "antd";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
-/**
- * Shared per-row `...` actions menu used by both the Teachers and
- * Classes list tables. Per `006-teachers-classes-mutations/research.md`
- * §6.5: a single shared client component reused by both lists via
- * cross-folder import.
- *
- * The component takes:
- *   - `ulid`: the row's cross-cutting ULID handle (per FR-021).
- *   - `name`: the row's display name (embedded in the Delete modal
- *     copy per FR-004).
- *   - `resource`: 'teacher' | 'class' — picks the resource-specific
- *     edit page route, the DELETE endpoint, and the modal copy.
- *   - `onDeleted`: callback fired after a successful delete OR a
- *     silent 404 (per FR-006 — list refresh, no error toast on 404).
- *
- * The trigger button has `aria-label="Row actions"` (per FR-001) as
- * a low-cost screen-reader hint that is announced on mouse hover/focus
- * regardless of keyboard-interaction support.
- *
- * Keyboard accessibility is NOT a Stage 3 requirement (per
- * Clarifications Session 2026-06-22 Q4); the mouse-only posture is
- * intentional.
- */
 export interface RowActionsMenuProps {
   ulid: string;
   name: string;
@@ -43,11 +20,8 @@ interface DeleteErrorEnvelope {
   };
 }
 
-/**
- * Resource-specific routing table. Hardcoded (not derived from
- * `resource + "s"`) because the classes plural is irregular —
- * `class` + "s" would yield `/classs/...` (Next.js 404).
- */
+// `class` + "s" would yield `/classs/...` (Next.js 404), so paths
+// are hardcoded per resource.
 const RESOURCE_PATHS: Record<"teacher" | "class", { edit: string; api: string }> = {
   teacher: { edit: "/teachers", api: "/api/v1.0/teachers" },
   class: { edit: "/classes", api: "/api/v1.0/classes" },
@@ -60,11 +34,7 @@ export function RowActionsMenu({
   onDeleted,
 }: RowActionsMenuProps) {
   const router = useRouter();
-  // Context-bound modal/notification — these are picked up from the
-  // antd `<App>` wrapper at the root layout, so they correctly inherit
-  // ConfigProvider theme + locale and avoid the subtle `Dropdown`-click
-  // drop-through issues that the static `Modal.confirm` /
-  // `notification.error` APIs have on antd 5.x.
+  // Context-bound modal/notification — picked up from antd `<App>` in root layout.
   const { modal, notification: notificationApi } = App.useApp();
   const paths = RESOURCE_PATHS[resource];
 
@@ -80,42 +50,25 @@ export function RowActionsMenu({
         try {
           const res = await fetch(`${paths.api}/${ulid}`, {
             method: "DELETE",
-            headers: {
-              "X-CSRF-Token": getCsrfToken() ?? "",
-            },
+            headers: { "X-CSRF-Token": getCsrfToken() ?? "" },
           });
-          if (res.status === 200) {
-            // Success — refresh the list silently per FR-006.
-            onDeleted();
-            return;
-          }
-          if (res.status === 404) {
-            // Second delete / race — refresh silently (no error toast)
-            // per FR-006 + Principle X.2.
+          if (res.status === 200 || res.status === 404) {
+            // Success or silent 404 (second delete / race) — refresh the list.
             onDeleted();
             return;
           }
           if (res.status === 409) {
-            // Form-teacher referential integrity guard (DELETE-Teacher
-            // only). The wire envelope embeds the class name in the
-            // `error` string verbatim per FR-005 — we surface it
-            // directly in the antd error notification.
-            const body = (await res
-              .json()
-              .catch(() => ({}))) as DeleteErrorEnvelope;
-            const message = body.error ?? "Conflict.";
+            // Form-teacher referential integrity guard (DELETE-Teacher).
+            const body = (await res.json().catch(() => ({}))) as DeleteErrorEnvelope;
             notificationApi.error({
               message: "Cannot delete",
-              description: message,
+              description: body.error ?? "Conflict.",
               placement: "topRight",
               duration: 8,
             });
             return;
           }
-          // Other error codes — show the wire envelope's error string.
-          const body = (await res
-            .json()
-            .catch(() => ({}))) as DeleteErrorEnvelope;
+          const body = (await res.json().catch(() => ({}))) as DeleteErrorEnvelope;
           notificationApi.error({
             message: "Delete failed",
             description: body.error ?? `Request failed (${res.status})`,
@@ -139,10 +92,6 @@ export function RowActionsMenu({
     { key: "delete", label: "Delete", danger: true },
   ];
 
-  // Single menu-level onClick dispatching by key — the canonical
-  // antd 5 pattern. Per-item onClick is also supported by rc-menu
-  // but the menu-level handler is the one guaranteed to fire on
-  // every build (and it makes the key → handler mapping explicit).
   function onMenuClick(info: { key: string }) {
     if (info.key === "edit") {
       router.push(`${paths.edit}/${ulid}/edit`);

@@ -3,19 +3,20 @@ import { useEffect, useState } from "react";
 import { LoadingState, ErrorState } from "@/components/StateViews";
 import { ClassForm } from "../_components/ClassForm";
 
+interface TeacherRef {
+  ulid: string;
+  name: string;
+}
+
+interface LevelRef {
+  ulid: string;
+  name: string;
+  active: boolean;
+}
+
 export default function AddClassPage() {
-  // The wire shapes from `GET /api/v1.0/teachers` and
-  // `GET /api/v1.0/levels` include `ulid` per FR-021; the Add Class
-  // form needs `ulid` so it can build the nested `level: { ulid, name }`
-  // and `formTeacher: { ulid, name }` body that the API expects (per
-  // `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
-  // — POST/GET reference object shape).
-  const [teachers, setTeachers] = useState<
-    { ulid: string; name: string }[] | null
-  >(null);
-  const [levels, setLevels] = useState<
-    { ulid: string; name: string; active: boolean }[] | null
-  >(null);
+  const [teachers, setTeachers] = useState<TeacherRef[] | null>(null);
+  const [levels, setLevels] = useState<LevelRef[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -25,18 +26,9 @@ export default function AddClassPage() {
           fetch("/api/v1.0/teachers", { cache: "no-store" }),
           fetch("/api/v1.0/levels", { cache: "no-store" }),
         ]);
-        if (!tRes.ok || !lRes.ok) {
-          throw new Error("Could not load form data");
-        }
-        // `GET /api/v1.0/teachers` returns
-        // `{ data: [ { ulid, name, subject: { ulid, name }, email, contactNumber } ] }`
-        // per Session 2026-06-20.
-        const tBody = (await tRes.json()) as {
-          data: { ulid: string; name: string }[];
-        };
-        const lBody = (await lRes.json()) as {
-          data: { ulid: string; name: string; active: boolean }[];
-        };
+        if (!tRes.ok || !lRes.ok) throw new Error("Could not load form data");
+        const tBody = (await tRes.json()) as { data: TeacherRef[] };
+        const lBody = (await lRes.json()) as { data: LevelRef[] };
         setTeachers(
           (tBody.data ?? []).map((t) => ({ ulid: t.ulid, name: t.name })),
         );

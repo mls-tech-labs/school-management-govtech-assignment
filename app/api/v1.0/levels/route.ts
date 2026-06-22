@@ -10,11 +10,7 @@ async function handleGet() {
   try {
     const levels = await listActiveLevels();
     return jsonOk({
-      data: levels.map((l) => ({
-        ulid: l.ulid,
-        name: l.name,
-        active: l.active,
-      })),
+      data: levels.map((l) => ({ ulid: l.ulid, name: l.name, active: l.active })),
     });
   } catch (err) {
     const { status, message } = toApiError(err);

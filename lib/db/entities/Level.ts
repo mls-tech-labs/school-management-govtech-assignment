@@ -10,14 +10,7 @@ import {
 } from "typeorm";
 import { generateUlid } from "@/lib/ulid";
 
-/**
- * Reference-list entity for `levels` (mirrors `Subject`). Seeded by the
- * user-prepared MySQL container per FR-016; read-only in Stage 1.
- *
- * Per FR-018 every persisted table carries a surrogate `id` PK plus the
- * six audit columns. Per FR-021 every persisted table carries a
- * `ulid CHAR(26) UNIQUE NOT NULL` row handle generated server-side.
- */
+// Reference list seeded by the user-prepared MySQL container.
 @Entity({ name: "levels" })
 @Index("uq_levels_name", ["name"], { unique: true })
 @Index("uq_levels_ulid", ["ulid"], { unique: true })

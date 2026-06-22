@@ -2,13 +2,6 @@
 
 import { RowActionsMenu } from "@/app/(private)/teachers/_components/RowActionsMenu";
 
-/**
- * Wire shape of a class entry in `GET /api/v1.0/classes` (per
- * `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
- * — POST/GET reference object shape). `level` and `formTeacher`
- * are nested `{ ulid, name }` objects; the table renders the
- * authoritative `.name` fields.
- */
 export interface ClassRow {
   ulid: string;
   level: { ulid: string; name: string };
@@ -46,23 +39,12 @@ export function ClassTable({ classes, onClassDeleted }: ClassTableProps) {
               <td className="px-4 py-3">{c.name}</td>
               <td className="px-4 py-3">{c.formTeacher.name}</td>
               <td className="px-4 py-3 text-right">
-                {onClassDeleted ? (
-                  <RowActionsMenu
-                    ulid={c.ulid}
-                    name={c.name}
-                    resource="class"
-                    onDeleted={onClassDeleted}
-                  />
-                ) : (
-                  <RowActionsMenu
-                    ulid={c.ulid}
-                    name={c.name}
-                    resource="class"
-                    onDeleted={() => {
-                      /* parent didn't pass a refresh callback — no-op */
-                    }}
-                  />
-                )}
+                <RowActionsMenu
+                  ulid={c.ulid}
+                  name={c.name}
+                  resource="class"
+                  onDeleted={onClassDeleted ?? (() => {})}
+                />
               </td>
             </tr>
           ))}

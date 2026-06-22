@@ -10,28 +10,13 @@ import {
 } from "typeorm";
 import { generateUlid } from "@/lib/ulid";
 
-/**
- * Reference-list entity for `subjects`. The Stage 1 seed list lives in
- * `docker/mysql/init/01-schema-and-seed.sql`. The Joi schema for the
- * Add Teacher form's `subject` field is generated at request time from
- * `SELECT name FROM subjects WHERE active = TRUE`.
- *
- * Per `specs/003-backend-api-db/spec.md` FR-018, every persisted table
- * carries a surrogate `id BIGINT UNSIGNED AUTO_INCREMENT` primary key
- * plus the six audit columns (`created_at`, `created_by`, `modified_at`,
- * `modified_by`, `version`). The natural-key `name` is preserved as
- * `UNIQUE NOT NULL`.
- *
- * Per FR-021 (Session 2026-06-20), every persisted table also carries a
- * `ulid CHAR(26) UNIQUE NOT NULL` cross-cutting row handle, generated
- * server-side by `lib/ulid.ts` in the `@BeforeInsert` hook below.
- */
+// Reference list seeded by the user-prepared MySQL container.
 @Entity({ name: "subjects" })
 @Index("uq_subjects_name", ["name"], { unique: true })
 @Index("uq_subjects_ulid", ["ulid"], { unique: true })
 export class Subject {
   @PrimaryGeneratedColumn({ type: "bigint", unsigned: true })
-  id!: string; // typeORM returns BIGINT as string by default
+  id!: string;
 
   @Column({ type: "varchar", length: 64, unique: true })
   name!: string;

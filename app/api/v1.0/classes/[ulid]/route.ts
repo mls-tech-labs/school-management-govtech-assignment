@@ -25,40 +25,29 @@ export const dynamic = "force-dynamic";
 type RouteCtx = { params: Promise<{ ulid: string }> };
 type CtxHandler = (req: AuthedRequest, ctx?: RouteCtx) => Promise<Response>;
 
-/**
- * Validate the `[ulid]` path parameter against the cross-cutting ULID
- * rule. Returns the cleaned ulid on success or a 400 response.
- */
 function validateUlid(ulid: string): string | Response {
   const { value, error } = ulidPathParamSchema.validate(ulid);
   if (error) return jsonError(400, "Invalid ulid path parameter");
   return value;
 }
 
-/**
- * GET `/api/v1.0/classes/[ulid]` — single-resource read.
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-003 + the
- * constitution v2.6.0 amendment: the data source for the Edit Class
- * page (RSC → GET pivot). Returns the row in the same shape as a
- * single entry in `GET /api/v1.0/classes`. On an unknown `ulid`,
- * returns `404 Not Found` with `{ "error": "Class not found" }`.
- */
+async function getUlid(ctx?: RouteCtx): Promise<string | Response> {
+  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
+  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
+  return validateUlid(ulid);
+}
+
 async function handleGet(
   _req: AuthedRequest,
   ctx?: RouteCtx,
 ): Promise<Response> {
-  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
-  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
-  const validated = validateUlid(ulid);
-  if (typeof validated !== "string") return validated;
+  const ulid = await getUlid(ctx);
+  if (typeof ulid !== "string") return ulid;
 
   try {
-    const klass = await findClassByUlid(validated);
+    const klass = await findClassByUlid(ulid);
     if (!klass) return jsonError(404, "Class not found");
 
-    // `klass.formTeacherId` and `klass.levelId` are surrogate FKs
-    // (per FR-019), not ulids — so we look both up by id.
     const teacher = await findTeacherById(klass.formTeacherId);
     const levelRow = await findLevelById(klass.levelId);
 
@@ -80,25 +69,12 @@ async function handleGet(
   }
 }
 
-/**
- * PUT `/api/v1.0/classes/[ulid]` — full-resource UPDATE.
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-008:
- *   - Re-runs every POST-side invariant: level-active,
- *     form-teacher-existence, form-teacher-uniqueness against a
- *     DIFFERENT class (row-exclusion self-match per Q1), and
- *     class-name-uniqueness (row-exclusion self-match).
- *   - Returns 200 with the updated row in the GET-list shape PLUS a
- *     sibling `previousModifiedAt` field per FR-007 / FR-016.
- */
 async function handlePut(
   req: AuthedRequest,
   ctx?: RouteCtx,
 ): Promise<Response> {
-  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
-  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
-  const validatedUlid = validateUlid(ulid);
-  if (typeof validatedUlid !== "string") return validatedUlid;
+  const ulid = await getUlid(ctx);
+  if (typeof ulid !== "string") return ulid;
 
   const body = await req.json().catch(() => null);
   if (body === null || typeof body !== "object") {
@@ -112,27 +88,24 @@ async function handlePut(
     return jsonError(400, first);
   }
 
-  const existing = await findClassByUlid(validatedUlid);
+  const existing = await findClassByUlid(ulid);
   if (!existing) return jsonError(404, "Class not found");
 
   // (1) level-active.
   const levelId = await findLevelIdByUlid(value.level.ulid);
   if (levelId === null) return jsonError(400, "Invalid level");
 
-  // (2) form-teacher existence (FR-004, 002-classes).
+  // (2) form-teacher existence.
   const teacher = await findTeacherByUlid(value.formTeacher.ulid);
   if (!teacher) return jsonError(404, "Teacher not found");
 
-  // (3) form-teacher uniqueness against a DIFFERENT class
-  //     (row-exclusion self-match rule).
+  // (3) form-teacher uniqueness vs. a DIFFERENT class.
   if (teacher.id !== existing.formTeacherId) {
     const blocking = await findClassByFormTeacherId(teacher.id);
-    if (blocking) {
-      return jsonError(409, "Teacher already assigned");
-    }
+    if (blocking) return jsonError(409, "Teacher already assigned");
   }
 
-  // (4) class-name uniqueness (row-exclusion self-match rule).
+  // (4) class-name uniqueness (row-exclusion self-match).
   if (value.name !== existing.name) {
     const { getDataSource } = await import("@/lib/db/data-source");
     const { Class } = await import("@/lib/db/entities/Class");
@@ -169,26 +142,14 @@ async function handlePut(
   }
 }
 
-/**
- * DELETE `/api/v1.0/classes/[ulid]` — hard delete.
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-010:
- *   - Unconstrained at the database layer (no other table references
- *     `classes.id` outside the audit columns per Principle X.2).
- *   - On success, returns 200 with `{ "ulid": "<deleted-class-ulid>" }`.
- *   - On a second DELETE (or unknown `ulid`), returns 404 with
- *     `{ "error": "Class not found" }` (idempotent per Principle X.2).
- */
 async function handleDelete(
   _req: AuthedRequest,
   ctx?: RouteCtx,
 ): Promise<Response> {
-  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
-  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
-  const validatedUlid = validateUlid(ulid);
-  if (typeof validatedUlid !== "string") return validatedUlid;
+  const ulid = await getUlid(ctx);
+  if (typeof ulid !== "string") return ulid;
 
-  const existing = await findClassByUlid(validatedUlid);
+  const existing = await findClassByUlid(ulid);
   if (!existing) return jsonError(404, "Class not found");
 
   try {
@@ -200,7 +161,7 @@ async function handleDelete(
   }
 }
 
-// DELETE still validates the empty body (per Principle VII).
+// DELETE still validates the empty body.
 const handleDeleteWithValidation: CtxHandler = async (req, ctx) => {
   void req.json().catch(() => null);
   const { error } = deleteClassRequestSchema.validate({});

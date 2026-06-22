@@ -31,12 +31,6 @@ export default function TeachersPage() {
 
   return (
     <>
-      {/*
-        Per the `Teachers - Empty State.png` design, the page-header
-        `+ Add Teacher` button is hidden when the table is empty —
-        the centred empty card carries its own CTA instead. The button
-        only renders above the populated table.
-      */}
       {!isEmpty ? (
         <div className="flex items-center justify-between mt-2 mb-6">
           <h1 className="text-2xl font-bold m-0">Teachers</h1>

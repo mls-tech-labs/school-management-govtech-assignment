@@ -7,26 +7,6 @@ import { FormField } from "@/components/FormField";
 import { isSafeRedirect } from "@/lib/auth/route-guard";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
-/**
- * `/login` — the single auth entry point for the application.
- *
- * Per spec FR-002 the page renders EXACTLY three interactive
- * elements: a username input, a password input, and a "Log in"
- * button. No "Sign up", "Register", "Forgot password", or
- * "Remember me" controls.
- *
- * POST flow (per spec FR-003..FR-005 + 005 FR-007):
- *   1. Submit `POST /api/v1.0/login` as `application/json` with
- *      `{ username, password }` AND the `X-CSRF-Token` header
- *      (CSRF middleware exempts login, but the header is sent for
- *      symmetry — if a future spec removes the exempt, the page
- *      is ready).
- *   2. On `200 OK` → navigate to the validated `redirectTo`
- *      (or `LOGIN_REDIRECT_DEFAULT` / `/`).
- *   3. On `401` → display a single generic error
- *      "Invalid username or password" and clear the password field.
- *   4. On `400` → display the field-level error from the body.
- */
 function LoginInner() {
   const router = useRouter();
   const search = useSearchParams();
@@ -63,9 +43,7 @@ function LoginInner() {
       } else if (res.status === 400) {
         setFormError(data.error ?? "Please review the highlighted fields.");
       } else if (res.status === 503) {
-        setFormError(
-          "The service is temporarily unavailable. Please retry in a moment.",
-        );
+        setFormError("The service is temporarily unavailable. Please retry in a moment.");
       } else {
         setFormError(data.error ?? "Could not log in. Please try again.");
       }

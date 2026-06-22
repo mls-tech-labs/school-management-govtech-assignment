@@ -5,36 +5,28 @@ import { notification } from "antd";
 import { LoadingState, ErrorState } from "@/components/StateViews";
 import { TeacherForm } from "../../_components/TeacherForm";
 
-/**
- * Edit Teacher page — the page is a React Server Component-style
- * client wrapper that fetches the existing teacher record from
- * `GET /api/v1.0/teachers/[ulid]` and renders the Add Teacher form
- * in edit mode (gated by the `initialValues` prop).
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-002 + the
- * constitution v2.6.0 amendment: the data source for the Edit page
- * is the new single-resource GET endpoint. On 404, the user is
- * redirected to `/teachers` with an antd warning notification.
- */
+interface Subject {
+  ulid: string;
+  name: string;
+  active: boolean;
+}
+
+interface TeacherRecord {
+  ulid: string;
+  name: string;
+  subject: { ulid: string; name: string };
+  email: string;
+  contactNumber: string;
+  modifiedAt: string;
+}
+
 export default function EditTeacherPage({
   params,
 }: {
   params: Promise<{ ulid: string }>;
 }) {
-  const [subjects, setSubjects] = useState<
-    { ulid: string; name: string; active: boolean }[] | null
-  >(null);
-  const [initialValues, setInitialValues] = useState<
-    | {
-        ulid: string;
-        name: string;
-        subject: { ulid: string; name: string };
-        email: string;
-        contactNumber: string;
-        modifiedAt: string;
-      }
-    | null
-  >(null);
+  const [subjects, setSubjects] = useState<Subject[] | null>(null);
+  const [initialValues, setInitialValues] = useState<TeacherRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
@@ -52,32 +44,17 @@ export default function EditTeacherPage({
         }
         if (!teacherRes.ok) {
           const body = await teacherRes.json().catch(() => ({}));
-          throw new Error(
-            body.error ?? `Request failed (${teacherRes.status})`,
-          );
+          throw new Error(body.error ?? `Request failed (${teacherRes.status})`);
         }
-        if (!subjectsRes.ok) {
-          throw new Error("Could not load subjects");
-        }
-        const subjectsBody = (await subjectsRes.json()) as {
-          data: { ulid: string; name: string; active: boolean }[];
-        };
-        const teacherBody = (await teacherRes.json()) as {
-          ulid: string;
-          name: string;
-          subject: { ulid: string; name: string };
-          email: string;
-          contactNumber: string;
-        };
+        if (!subjectsRes.ok) throw new Error("Could not load subjects");
+
+        const subjectsBody = (await subjectsRes.json()) as { data: Subject[] };
+        const teacherBody = (await teacherRes.json()) as Omit<TeacherRecord, "modifiedAt">;
         setSubjects(subjectsBody.data ?? []);
         setInitialValues({
           ...teacherBody,
-          // Capture the form-load moment; the form-load `modifiedAt` is
-          // approximated by `new Date().toISOString()` since the GET
-          // response doesn't currently echo the row's `modified_at`.
-          // The PUT 200 `previousModifiedAt` will always differ from
-          // this if we want a useful comparison we should refetch
-          // modified_at from the server. For now, leave undefined.
+          // Approximation — GET response doesn't echo modified_at; the
+          // concurrent-edit toast compares to this value.
           modifiedAt: new Date().toISOString(),
         });
       } catch (e: unknown) {
@@ -87,7 +64,6 @@ export default function EditTeacherPage({
   }, [params]);
 
   if (notFound) {
-    // Per FR-002 / Edge Cases: redirect to list with a flash warning.
     notification.warning({
       message: "Teacher not found",
       description:

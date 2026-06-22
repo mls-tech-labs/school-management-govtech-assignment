@@ -5,12 +5,8 @@ export interface SelectProps {
   name: string;
   value: string;
   onChange: (v: string) => void;
-  /**
-   * The list of options shown in the dropdown. Each string is BOTH the
-   * displayed label AND the value submitted. For cases where label and
-   * value diverge (e.g., Form Teacher — name vs email), use a purpose-
-   * built component rather than this generic Select.
-   */
+  /** Each string is BOTH the label AND the value. Use a custom
+   *  component when label and value diverge. */
   options: string[];
   required?: boolean;
   error?: string;
@@ -18,17 +14,6 @@ export interface SelectProps {
   disabled?: boolean;
 }
 
-/**
- * Single-select dropdown for cases where the visible label equals the
- * submitted value (Subjects, Levels). Styled with Tailwind CSS utility
- * classes (per Constitution v2.3.0) to match the Add Teacher / Add
- * Class designs — plain `<select>` with `appearance-none` and a custom
- * chevron.
- *
- * For the Form Teacher control (where label is the teacher's name and
- * value is the teacher's email), use `FormTeacherSelect` instead — it
- * carries the email/name mapping explicitly.
- */
 export function Select({
   label,
   name,

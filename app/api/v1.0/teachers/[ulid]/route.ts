@@ -22,40 +22,30 @@ export const dynamic = "force-dynamic";
 type RouteCtx = { params: Promise<{ ulid: string }> };
 type CtxHandler = (req: AuthedRequest, ctx?: RouteCtx) => Promise<Response>;
 
-/**
- * Validate the `[ulid]` path parameter against the cross-cutting ULID
- * rule. Returns the cleaned ulid on success or a 400 response.
- */
 function validateUlid(ulid: string): string | Response {
   const { value, error } = ulidPathParamSchema.validate(ulid);
   if (error) return jsonError(400, "Invalid ulid path parameter");
   return value;
 }
 
-/**
- * GET `/api/v1.0/teachers/[ulid]` — single-resource read.
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-002 + the
- * constitution v2.6.0 amendment: the data source for the Edit Teacher
- * page (RSC → GET pivot). Returns the row in the same shape as a
- * single entry in `GET /api/v1.0/teachers`. On an unknown `ulid`,
- * returns `404 Not Found` with `{ "error": "Teacher not found" }`.
- */
+async function getUlid(ctx?: RouteCtx): Promise<string | Response> {
+  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
+  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
+  return validateUlid(ulid);
+}
+
 async function handleGet(
   _req: AuthedRequest,
   ctx?: RouteCtx,
 ): Promise<Response> {
-  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
-  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
-  const validated = validateUlid(ulid);
-  if (typeof validated !== "string") return validated;
+  const ulid = await getUlid(ctx);
+  if (typeof ulid !== "string") return ulid;
 
   try {
-    const teacher = await findTeacherByUlid(validated);
+    const teacher = await findTeacherByUlid(ulid);
     if (!teacher) return jsonError(404, "Teacher not found");
 
-    // `teacher.subjectId` is the surrogate `subjects.id` FK value, not
-    // the ulid — so we look it up by id (per FR-019).
+    // Resolve the joined subject's ulid+name via the surrogate FK.
     const subject = await findSubjectById(teacher.subjectId);
     return jsonOk({
       ulid: teacher.ulid,
@@ -73,24 +63,12 @@ async function handleGet(
   }
 }
 
-/**
- * PUT `/api/v1.0/teachers/[ulid]` — full-resource UPDATE.
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-007:
- *   - Re-runs every POST-side invariant: subject-active, email-unique
- *     (with the row-exclusion self-match rule per Clarifications Q1),
- *     Singapore `^[89]\d{7}$` contact-number rule.
- *   - Returns 200 with the updated row in the GET-list shape PLUS a
- *     sibling `previousModifiedAt` field per FR-007 / FR-016.
- */
 async function handlePut(
   req: AuthedRequest,
   ctx?: RouteCtx,
 ): Promise<Response> {
-  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
-  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
-  const validatedUlid = validateUlid(ulid);
-  if (typeof validatedUlid !== "string") return validatedUlid;
+  const ulid = await getUlid(ctx);
+  if (typeof ulid !== "string") return ulid;
 
   const body = await req.json().catch(() => null);
   if (body === null || typeof body !== "object") {
@@ -104,15 +82,14 @@ async function handlePut(
     return jsonError(400, first);
   }
 
-  const existing = await findTeacherByUlid(validatedUlid);
+  const existing = await findTeacherByUlid(ulid);
   if (!existing) return jsonError(404, "Teacher not found");
 
   // Re-run POST-side invariants.
-  // (1) subject-active.
   const subject = await findSubjectByUlid(value.subject.ulid);
   if (!subject) return jsonError(400, "Invalid subject");
 
-  // (2) email-unique with row-exclusion self-match (FR-007 / Q1).
+  // Email uniqueness with row-exclusion self-match.
   if (value.email !== existing.email) {
     const { getDataSource } = await import("@/lib/db/data-source");
     const { Teacher } = await import("@/lib/db/entities/Teacher");
@@ -146,30 +123,17 @@ async function handlePut(
   }
 }
 
-/**
- * DELETE `/api/v1.0/teachers/[ulid]` — hard delete with form-teacher
- * referential integrity guard.
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-009:
- *   - Reject with 409 + singular envelope when the teacher is currently
- *     a form teacher of a class.
- *   - On success, return 200 with `{ "ulid": "<deleted-teacher-ulid>" }`.
- *   - On a second DELETE (or unknown `ulid`), return 404 with
- *     `{ "error": "Teacher not found" }` (idempotent per Principle X.2).
- */
 async function handleDelete(
   _req: AuthedRequest,
   ctx?: RouteCtx,
 ): Promise<Response> {
-  const { ulid } = (await ctx?.params) ?? ({} as { ulid?: string });
-  if (!ulid) return jsonError(400, "Invalid ulid path parameter");
-  const validatedUlid = validateUlid(ulid);
-  if (typeof validatedUlid !== "string") return validatedUlid;
+  const ulid = await getUlid(ctx);
+  if (typeof ulid !== "string") return ulid;
 
-  const existing = await findTeacherByUlid(validatedUlid);
+  const existing = await findTeacherByUlid(ulid);
   if (!existing) return jsonError(404, "Teacher not found");
 
-  // Form-teacher referential integrity guard (FR-009).
+  // Form-teacher referential integrity guard.
   const blockingClass = await findClassByFormTeacherId(existing.id);
   if (blockingClass) {
     return jsonError(
@@ -188,7 +152,7 @@ async function handleDelete(
   }
 }
 
-// DELETE still validates the empty body (per Principle VII).
+// DELETE still validates the empty body.
 const handleDeleteWithValidation: CtxHandler = async (req, ctx) => {
   void req.json().catch(() => null);
   const { error } = deleteTeacherRequestSchema.validate({});

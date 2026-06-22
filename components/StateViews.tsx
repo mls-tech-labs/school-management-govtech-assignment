@@ -7,7 +7,6 @@ export interface EmptyStateProps {
   action?: { label: string; href: string };
 }
 
-/** Generic empty state — composed with Tailwind utility classes. */
 export function EmptyState({ message, action }: EmptyStateProps) {
   return (
     <div className="card flex flex-col items-center justify-center min-h-[320px] text-center gap-4">
@@ -24,7 +23,6 @@ export function EmptyState({ message, action }: EmptyStateProps) {
   );
 }
 
-/** Generic error state — composed with Tailwind utility classes. */
 export function ErrorState({
   message,
   onRetry,
@@ -48,7 +46,6 @@ export function ErrorState({
   );
 }
 
-/** Generic loading state — composed with Tailwind utility classes. */
 export function LoadingState() {
   return (
     <div className="card flex flex-col items-center justify-center min-h-[320px] text-center gap-4">

@@ -7,18 +7,6 @@ import { Button } from "@/components/Button";
 import { Select } from "@/components/Select";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
-/**
- * TeacherForm — used by both the Add Teacher flow and the Edit Teacher
- * flow. The presence of `initialValues` switches the form into edit
- * mode (gated by the presence of the `[ulid]` path parameter on the
- * edit page). In edit mode:
- *   - The fields are pre-populated from `initialValues`.
- *   - The submit handler dispatches PUT (not POST).
- *   - The form captures `modifiedAt` (the row's GET-load
- *     `modified_at` value) so the `use-edit-submit` hook can compare
- *     it to the PUT 200 `previousModifiedAt` for the concurrent-edit
- *     toast (per FR-016).
- */
 export interface TeacherFormProps {
   subjects: { ulid: string; name: string; active: boolean }[];
   initialValues?: {
@@ -27,30 +15,23 @@ export interface TeacherFormProps {
     subject: { ulid: string; name: string };
     email: string;
     contactNumber: string;
-    /** The `modified_at` value the form captured on mount (ISO string). */
+    /** Captured on mount — used to detect concurrent edits in PUT 200. */
     modifiedAt?: string;
   };
 }
 
-function mapError(field: string, message: string): string {
-  const lower = message.toLowerCase();
-  if (field === "email" || lower.includes("email")) {
-    return "This email address is invalid.";
+// Match a wire-envelope error message to the field + user-facing copy.
+// Order matters: contactNumber before subject before email before name
+// (most specific substring first).
+function matchFieldError(message: string): [string, string] | null {
+  const m = message.toLowerCase();
+  if (m.includes("contactnumber") || m.includes("pattern") || m.includes("start")) {
+    return ["contactNumber", "This work contact number is invalid."];
   }
-  if (field === "contactNumber" || lower.includes("contactnumber") || lower.includes("pattern")) {
-    return "This work contact number is invalid.";
-  }
-  if (
-    field === "subject" ||
-    field === "subject.ulid" ||
-    lower.includes("subject")
-  ) {
-    return "Please select a valid subject.";
-  }
-  if (field === "name" || lower.includes("name")) {
-    return "Name is required.";
-  }
-  return message;
+  if (m.includes("subject")) return ["subject", "Please select a valid subject."];
+  if (m.includes("email")) return ["email", "This email address is invalid."];
+  if (m.includes("name")) return ["name", "Name is required."];
+  return null;
 }
 
 export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
@@ -66,9 +47,7 @@ export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // The dropdown shows names; the API wants the nested { ulid, name }
-  // object so the server can resolve by `ulid` against
-  // `uq_subjects_ulid`. We look up the selected subject here.
+  // The dropdown shows names; the API wants the nested { ulid, name } object.
   const selectedSubject = subjects.find((s) => s.name === subject);
 
   async function onSubmit(e: React.FormEvent) {
@@ -101,7 +80,7 @@ export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
         body: JSON.stringify(body),
       });
       if (res.status === 200 || res.status === 201) {
-        // Edit mode — concurrent-edit toast (FR-016 / Clarifications Q3).
+        // Edit mode — concurrent-edit toast.
         if (isEdit && initialValues?.modifiedAt) {
           const data = (await res.json().catch(() => ({}))) as {
             previousModifiedAt?: string;
@@ -127,23 +106,14 @@ export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
       }
       const data: { error?: string } = await res.json().catch(() => ({}));
       if (res.status === 400) {
-        const m = (data.error ?? "").toLowerCase();
-        const next: Record<string, string> = {};
-        if (m.includes("name")) next.name = mapError("name", data.error ?? "");
-        else if (m.includes("subject"))
-          next.subject = mapError("subject", data.error ?? "");
-        else if (m.includes("email"))
-          next.email = mapError("email", data.error ?? "");
-        else if (m.includes("contactnumber") || m.includes("pattern") || m.includes("start"))
-          next.contactNumber = mapError(
-            "contactNumber",
-            data.error ?? "",
-          );
-        else setFormError(data.error ?? "Please review the highlighted fields.");
-        setErrors(next);
+        const match = matchFieldError(data.error ?? "");
+        if (match) {
+          const [field, message] = match;
+          setErrors({ [field]: message });
+        } else {
+          setFormError(data.error ?? "Please review the highlighted fields.");
+        }
       } else if (res.status === 409) {
-        // For PUT, the field-level 409 is the duplicate email or
-        // unknown subject. Show inline.
         if (isEdit) {
           const m = (data.error ?? "").toLowerCase();
           if (m.includes("email")) {
@@ -215,10 +185,7 @@ export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
           autoComplete="tel"
         />
         {formError ? (
-          <div
-            className="text-danger text-sm mt-2"
-            role="alert"
-          >
+          <div className="text-danger text-sm mt-2" role="alert">
             {formError}
           </div>
         ) : null}
@@ -229,12 +196,8 @@ export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
         </Button>
         <Button type="submit" variant="primary" disabled={submitting}>
           {submitting
-            ? isEdit
-              ? "Saving…"
-              : "Adding…"
-            : isEdit
-              ? "Save Teacher"
-              : "Add Teacher"}
+            ? isEdit ? "Saving…" : "Adding…"
+            : isEdit ? "Save Teacher" : "Add Teacher"}
         </Button>
       </div>
     </form>

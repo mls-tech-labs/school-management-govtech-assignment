@@ -10,11 +10,7 @@ async function handleGet() {
   try {
     const subjects = await listActiveSubjects();
     return jsonOk({
-      data: subjects.map((s) => ({
-        ulid: s.ulid,
-        name: s.name,
-        active: s.active,
-      })),
+      data: subjects.map((s) => ({ ulid: s.ulid, name: s.name, active: s.active })),
     });
   } catch (err) {
     const { status, message } = toApiError(err);

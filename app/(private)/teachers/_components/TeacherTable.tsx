@@ -2,13 +2,6 @@
 
 import { RowActionsMenu } from "./RowActionsMenu";
 
-/**
- * Wire shape of a teacher entry in
- * `GET /api/v1.0/teachers` (per
- * `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
- * — POST/GET reference object shape). `subject` is a nested
- * `{ ulid, name }` object; the table renders `subject.name`.
- */
 export interface TeacherRow {
   ulid: string;
   name: string;
@@ -50,23 +43,12 @@ export function TeacherTable({ teachers, onTeacherDeleted }: TeacherTableProps) 
               <td className="px-4 py-3">{t.email}</td>
               <td className="px-4 py-3 whitespace-nowrap">{fmt(t.contactNumber)}</td>
               <td className="px-4 py-3 text-right">
-                {onTeacherDeleted ? (
-                  <RowActionsMenu
-                    ulid={t.ulid}
-                    name={t.name}
-                    resource="teacher"
-                    onDeleted={onTeacherDeleted}
-                  />
-                ) : (
-                  <RowActionsMenu
-                    ulid={t.ulid}
-                    name={t.name}
-                    resource="teacher"
-                    onDeleted={() => {
-                      /* parent didn't pass a refresh callback — no-op */
-                    }}
-                  />
-                )}
+                <RowActionsMenu
+                  ulid={t.ulid}
+                  name={t.name}
+                  resource="teacher"
+                  onDeleted={onTeacherDeleted ?? (() => {})}
+                />
               </td>
             </tr>
           ))}

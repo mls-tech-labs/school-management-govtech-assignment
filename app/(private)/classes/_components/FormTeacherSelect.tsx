@@ -1,16 +1,9 @@
 "use client";
 
-/**
- * Form Teacher dropdown data shape — the row carries `ulid` per
- * FR-021 so the Add Class form can build the nested
- * `formTeacher: { ulid, name }` body that the API expects (per
- * Clarifications, Session 2026-06-20). The `value` is the teacher's
- * `ulid` (the server-side lookup key); the option label is the
- * teacher's `name` (the display value).
- */
 export interface FormTeacherSelectProps {
   teachers: { ulid: string; name: string }[];
-  value: string; // teacher.ulid
+  /** Teacher ulid (the server-side lookup key). */
+  value: string;
   onChange: (v: string) => void;
   error?: string;
 }
@@ -26,10 +19,7 @@ export function FormTeacherSelect({
   if (teachers.length === 0) {
     return (
       <div className="mb-4">
-        <label
-          htmlFor="formTeacher"
-          className="block font-semibold mb-1"
-        >
+        <label htmlFor="formTeacher" className="block font-semibold mb-1">
           Form Teacher
         </label>
         <div className="card flex flex-row items-center justify-between gap-2">
@@ -47,10 +37,7 @@ export function FormTeacherSelect({
 
   return (
     <div className="mb-4">
-      <label
-        htmlFor="formTeacher"
-        className="block font-semibold mb-1"
-      >
+      <label htmlFor="formTeacher" className="block font-semibold mb-1">
         Form Teacher
       </label>
       <div className="relative">

@@ -5,36 +5,33 @@ import { notification } from "antd";
 import { LoadingState, ErrorState } from "@/components/StateViews";
 import { ClassForm } from "../../_components/ClassForm";
 
-/**
- * Edit Class page — fetches the existing class record from
- * `GET /api/v1.0/classes/[ulid]` and renders the Add Class form in
- * edit mode (gated by the `initialValues` prop).
- *
- * Per `006-teachers-classes-mutations/spec.md` FR-003 + the
- * constitution v2.6.0 amendment. On 404, the user is redirected to
- * `/classes` with an antd warning notification.
- */
+interface TeacherRef {
+  ulid: string;
+  name: string;
+}
+
+interface LevelRef {
+  ulid: string;
+  name: string;
+  active: boolean;
+}
+
+interface ClassRecord {
+  ulid: string;
+  name: string;
+  level: { ulid: string; name: string };
+  formTeacher: { ulid: string; name: string };
+  modifiedAt: string;
+}
+
 export default function EditClassPage({
   params,
 }: {
   params: Promise<{ ulid: string }>;
 }) {
-  const [teachers, setTeachers] = useState<
-    { ulid: string; name: string }[] | null
-  >(null);
-  const [levels, setLevels] = useState<
-    { ulid: string; name: string; active: boolean }[] | null
-  >(null);
-  const [initialValues, setInitialValues] = useState<
-    | {
-        ulid: string;
-        name: string;
-        level: { ulid: string; name: string };
-        formTeacher: { ulid: string; name: string };
-        modifiedAt: string;
-      }
-    | null
-  >(null);
+  const [teachers, setTeachers] = useState<TeacherRef[] | null>(null);
+  const [levels, setLevels] = useState<LevelRef[] | null>(null);
+  const [initialValues, setInitialValues] = useState<ClassRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
@@ -58,23 +55,11 @@ export default function EditClassPage({
         if (!teachersRes.ok || !levelsRes.ok) {
           throw new Error("Could not load form data");
         }
-        const teachersBody = (await teachersRes.json()) as {
-          data: { ulid: string; name: string }[];
-        };
-        const levelsBody = (await levelsRes.json()) as {
-          data: { ulid: string; name: string; active: boolean }[];
-        };
-        const classBody = (await classRes.json()) as {
-          ulid: string;
-          name: string;
-          level: { ulid: string; name: string };
-          formTeacher: { ulid: string; name: string };
-        };
+        const teachersBody = (await teachersRes.json()) as { data: TeacherRef[] };
+        const levelsBody = (await levelsRes.json()) as { data: LevelRef[] };
+        const classBody = (await classRes.json()) as Omit<ClassRecord, "modifiedAt">;
         setTeachers(
-          (teachersBody.data ?? []).map((t) => ({
-            ulid: t.ulid,
-            name: t.name,
-          })),
+          (teachersBody.data ?? []).map((t) => ({ ulid: t.ulid, name: t.name })),
         );
         setLevels(levelsBody.data ?? []);
         setInitialValues({
