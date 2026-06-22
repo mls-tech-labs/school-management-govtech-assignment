@@ -1,0 +1,584 @@
+openapi: 3.1.0
+info:
+  title: Classes API — Stage 3 mutations (006)
+  version: 0.3.0
+  description: |
+    Stage 3 mutation contract for the Classes feature, owned by
+    `specs/006-teachers-classes-mutations/spec.md`. Extends the
+    Stage 1 `002-classes/contracts/classes.yaml` contract with
+    three new endpoints:
+
+      - `GET /api/v1.0/classes/{ulid}` — single-resource read
+        (introduced by the constitution v2.6.0 amendment; data
+        source for the Stage 3 Edit Class page).
+      - `PUT /api/v1.0/classes/{ulid}` — full-resource UPDATE
+        on a Class; re-runs level-active, form-teacher-existence,
+        form-teacher-uniqueness-against-different-class (with
+        the same-class self-match rule), and class-name-
+        uniqueness (with the same-class self-match rule);
+        returns `200 OK` with the updated row plus a
+        `previousModifiedAt` sibling field for the client-side
+        concurrent-edit toast.
+      - `DELETE /api/v1.0/classes/{ulid}` — hard delete;
+        unconstrained at the database layer (no other table
+        references `classes.id` outside the audit columns);
+        second DELETE returns `404 Not Found` (idempotent per
+        Principle X.2).
+
+    Cross-cutting contract details (status-code table, error
+    envelope, 415 / 503 behaviour, version prefix
+    `/api/v1.0/`) are defined in
+    `003-backend-api-db/spec.md` (FR-013, FR-022) and are
+    inherited by reference. Authentication is via the
+    `withAuth` middleware from `004-user-auth`; CSRF is via
+    the double-submit-cookie middleware from
+    `005-security-hardening` (GET is exempt per Principle
+    IX.3).
+
+    Stage 1 deliberately does NOT expose the `id` column (the
+    surrogate primary key is reserved for the mutation layer's
+    internal use; it lives in the DB but is not returned to
+    the client). The `previousModifiedAt` field is the
+    application-layer extension to the standard `Class`
+    response shape (it is not a persistence-layer column).
+
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: classes
+    description: Class registration, lookup, and Stage 3 mutations
+
+paths:
+  /api/v1.0/classes/{ulid}:
+    parameters:
+      - in: path
+        name: ulid
+        required: true
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+        description: |
+          26-character Crockford Base32 ULID. The
+          frontend-stable row handle (per FR-021, owned by
+          `003-backend-api-db`).
+
+    get:
+      tags: [classes]
+      summary: Get a single class by ulid (Stage 3, v2.6.0)
+      description: |
+        Returns the class record in the same shape as a
+        single entry in `GET /api/v1.0/classes` (per
+        `002-classes/spec.md` FR-007 — `ulid`, `name`,
+        `level` as nested `{ ulid, name }`, `formTeacher`
+        as nested `{ ulid, name }`) with HTTP `200 OK` on
+        success, or `404 Not Found` with
+        `{ "error": "Class not found" }` on an unknown
+        `ulid`. The endpoint is authenticated (Principle IV)
+        and CSRF-exempt (GET is exempt per Principle IX.3).
+        The endpoint is the data source for the Stage 3
+        Edit Class page (`/classes/[ulid]/edit`, owned by
+        006 spec FR-003).
+      operationId: getClass
+      responses:
+        "200":
+          description: Class found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Class"
+              example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA0"
+                name: "Class 1A"
+                level:
+                  ulid: "01H000000000000000000000B1"
+                  name: "Primary 1"
+                formTeacher:
+                  ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
+                  name: "Alice Tan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            The `ulid` does not match any registered class.
+            Per `003-backend-api-db/spec.md` FR-013 (the
+            Stage 3 amendment adds the `404 Not Found` row to
+            the cross-cutting status-code table).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { "error": "Class not found" }
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    put:
+      tags: [classes]
+      summary: Update an existing class (Stage 3, full-resource)
+      description: |
+        Full-resource `PUT` — every mutable field (`name`,
+        `level` as nested `{ ulid, name }`, `formTeacher` as
+        nested `{ ulid, name }`) is submitted together; the
+        `ulid` is taken from the path parameter, not the
+        body, and is immutable. The route re-runs every
+        POST-side invariant (per Principle X.3):
+        level-active (FR-005a, 002-classes), form-teacher-
+        existence (FR-004, 002-classes), form-teacher-
+        uniqueness against a DIFFERENT class (FR-005,
+        002-classes — the class updating to the same form
+        teacher it already has is permitted; only a
+        collision with a *different* class is rejected),
+        and class-name-uniqueness (FR-005c, 002-classes —
+        the class updating to the same name it already has
+        is permitted; only a collision with a *different*
+        class is rejected). On success, the `200 OK`
+        response body additionally includes the row's
+        **pre-update** `modified_at` value as a sibling
+        field named `previousModifiedAt` — this enables
+        the client-side concurrent-edit toast described in
+        006 spec FR-016. On failure, the route returns the
+        same JSON error envelope (`{ "error": "..." }`) and
+        HTTP status code as the equivalent POST failure
+        (`400` / `404` / `409`).
+      operationId: updateClass
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutClassRequest"
+            examples:
+              valid:
+                value:
+                  name: "Class 1A"
+                  level:
+                    ulid: "01H000000000000000000000B1"
+                    name: "Primary 1"
+                  formTeacher:
+                    ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
+                    name: "Alice Tan"
+      responses:
+        "200":
+          description: Class updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PutClassResponse"
+              example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA0"
+                name: "Class 1A"
+                level:
+                  ulid: "01H000000000000000000000B1"
+                  name: "Primary 1"
+                formTeacher:
+                  ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
+                  name: "Alice Tan"
+                previousModifiedAt: "2026-06-22T10:15:30.000Z"
+        "400":
+          description: |
+            Validation error (missing field, unknown/inactive
+            level, unknown form teacher). Per
+            `003-backend-api-db/spec.md` FR-013.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unknownLevel:
+                  value: { "error": "level must be one of [Primary 1, Primary 2, ..., Secondary 4]" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenCsrf"
+        "404":
+          description: |
+            The `ulid` does not match any registered class,
+            OR the `formTeacher.ulid` does not match any
+            registered teacher (the latter is the same as
+            the POST-Classes 404 path; the route does a
+            pre-UPDATE existence check to distinguish the
+            two).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { "error": "Class not found" }
+                teacherNotFound:
+                  value: { "error": "Teacher not found" }
+        "409":
+          description: |
+            Either the class `name` is already in use by a
+            DIFFERENT class (the row-exclusion self-match
+            rule allows a no-op update on the current name),
+            or the teacher identified by `formTeacher.ulid`
+            is already the form teacher of a DIFFERENT class
+            (the row-exclusion self-match rule allows a
+            no-op update on the current form teacher).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                duplicateName:
+                  value: { "error": "Class name already in use" }
+                teacherAlreadyAssigned:
+                  value: { "error": "Teacher is already assigned as form teacher of another class" }
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    delete:
+      tags: [classes]
+      summary: Delete a class (Stage 3, idempotent)
+      description: |
+        Hard delete. Unconstrained at the database layer
+        (no other table references `classes.id` outside the
+        audit columns — per Principle X.2). On success,
+        the route deletes the row and returns `200 OK` with
+        `{ "ulid": "<deleted-class-ulid>" }`. A second
+        DELETE on the same `ulid` returns `404 Not Found`
+        with `{ "error": "Class not found" }` (idempotent
+        per Principle X.2). After a successful delete, the
+        teacher who was the deleted class's form teacher
+        is now eligible to be the form teacher of a new
+        class (the form-teacher uniqueness invariant is
+        freed by the class delete).
+      operationId: deleteClass
+      responses:
+        "200":
+          description: Class deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResourceResponse"
+              example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5PA0"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenCsrf"
+        "404":
+          description: |
+            The `ulid` does not match any registered class
+            (covers the second DELETE on the same `ulid`,
+            per Principle X.2 idempotency, and the unknown
+            `ulid` case).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { "error": "Class not found" }
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Class:
+      type: object
+      description: |
+        The Stage 1 + Stage 3 wire shape of a class. `ulid`
+        is the frontend-stable row handle (per FR-021, owned
+        by `003-backend-api-db`). Reference fields are
+        nested `{ ulid, name }` objects per
+        `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-20 (POST/GET reference object shape). The
+        `id` column is intentionally not exposed (per
+        `003-backend-api-db/spec.md` FR-019 + FR-020).
+      required: [ulid, name, level, formTeacher]
+      properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Server-generated
+            by the `ulid` npm package. The frontend-stable row
+            handle (per FR-021).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: |
+            Class display name (e.g., "Class 1A"). Globally
+            unique — the `UNIQUE(classes.name)` constraint is
+            the data-layer backstop for FR-005c.
+        level:
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced level (the server-side
+                lookup key — matched against
+                `uq_levels_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Display name of the referenced level (e.g.,
+                "Primary 1"). Echoes the authoritative `name`
+                from the `levels` row; on POST / PUT it is a
+                display hint and is NOT validated against the
+                row identified by `ulid`.
+        formTeacher:
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the form teacher (the server-side
+                lookup key — matched against
+                `uq_teachers_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+              description: |
+                Form teacher's display name, resolved
+                server-side via the JOIN against `teachers`.
+                Echoes the authoritative `name` from the
+                referenced teacher row; on POST / PUT it is
+                a display hint and is NOT validated against
+                the row identified by `ulid`.
+
+    PutClassRequest:
+      type: object
+      description: |
+        Full-resource `PUT` body for a Class. Every mutable
+        field is required; the `ulid` is taken from the
+        path parameter, not the body, and is immutable.
+      required: [name, level, formTeacher]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        level:
+          type: object
+          required: [ulid]
+          additionalProperties: false
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced level. Must match an
+                active entry in the `levels` reference list
+                (looked up via `uq_levels_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Optional display name of the referenced
+                level. Ignored server-side — the lookup is
+                `ulid`-only.
+        formTeacher:
+          type: object
+          required: [ulid]
+          additionalProperties: false
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the form teacher. Must match a
+                registered teacher (looked up via
+                `uq_teachers_ulid`); a teacher who is
+                already the form teacher of a DIFFERENT
+                class is rejected with `409 Conflict`
+                (per FR-005, 002-classes); the same form
+                teacher the class already has is permitted
+                (no `form_teacher_id` change → no violation).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+              description: |
+                Optional display name of the form teacher.
+                Ignored server-side — the lookup is
+                `ulid`-only.
+
+    PutClassResponse:
+      type: object
+      description: |
+        The Stage 3 200 response body for `PUT /api/v1.0/classes/{ulid}`.
+        Same as the standard `Class` shape with one additional
+        sibling field `previousModifiedAt` (per 006 spec FR-008)
+        carrying the row's pre-update `modified_at` value as an
+        ISO-8601 timestamp. The client-side `use-edit-submit` hook
+        captures the form-load `modifiedAt` and compares it to this
+        field — if they differ, the concurrent-edit toast fires (per
+        006 spec FR-016).
+      required: [ulid, name, level, formTeacher, previousModifiedAt]
+      properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        level:
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+        formTeacher:
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+            name:
+              type: string
+              minLength: 1
+              maxLength: 255
+        previousModifiedAt:
+          type: string
+          format: date-time
+          description: |
+            The row's pre-update `modified_at` value (the value
+            immediately before the just-completed PUT write),
+            formatted as an ISO-8601 timestamp. The
+            `use-edit-submit` hook captures the form-load
+            `modifiedAt` and compares it to this field — if they
+            differ, the concurrent-edit toast fires.
+
+    DeleteResourceResponse:
+      type: object
+      description: |
+        The 200 response body for a successful DELETE on a
+        Teacher or Class. The envelope echoes the deleted
+        row's `ulid` for client confirmation. NOT
+        `204 No Content` — the envelope is uniform with the
+        rest of the API (per
+        `TODO(STAGE3_DELETE_RESPONSE_SHAPE)` in the
+        constitution Sync Impact Report).
+      required: [ulid]
+      properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            The `ulid` of the deleted row.
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            Human-readable error message. The `error` field
+            stays canonical; the optional `details` extension
+            is a machine-readable extension that downstream
+            consumers can use without parsing the error
+            string. Per `003-backend-api-db/spec.md` FR-013.
+
+  responses:
+    Unauthorized:
+      description: |
+        No valid session cookie was presented (the `withAuth`
+        middleware from `004-user-auth` rejects with `401`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Authentication required"
+    ForbiddenCsrf:
+      description: |
+        The `X-CSRF-Token` header does not match the
+        `csrfToken` cookie (the double-submit-cookie
+        middleware from `005-security-hardening` rejects
+        with `403`). GET requests are exempt per Principle
+        IX.3.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "CSRF token mismatch"
+    UnsupportedMediaType:
+      description: |
+        The request body is not
+        `Content-Type: application/json` (per
+        `003-backend-api-db/spec.md` FR-013). DELETE
+        requests have no body and are not subject to the
+        415 check.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Content-Type must be application/json"
+    InternalServerError:
+      description: |
+        Unhandled server failure. The `error` field is a
+        human-readable summary; the implementation MUST NOT
+        leak internal messages, stack traces, or database
+        column names (per Constitution Principle VII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Internal server error"
+    ServiceUnavailable:
+      description: |
+        The MySQL data store is unavailable. The application
+        returns 503 on a connection-pool exhaustion or a
+        typeORM `ConnectionNotFoundError`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Service unavailable"

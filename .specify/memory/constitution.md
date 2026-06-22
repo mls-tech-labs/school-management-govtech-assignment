@@ -1,52 +1,280 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.3.0 → 2.4.0  [MINOR: Principle IV rewritten to permit
-                                  session-based authentication for the
-                                  single Administrator role; new
-                                  Principle IX (Security & Hardening)
-                                  added covering CORS, CSP, CSRF, XSS;
-                                  Stage Scope extended with a Stage 2
-                                  section that authorises the
-                                  authentication feature
-                                  (`specs/004-user-auth/spec.md`) and
-                                  the four web-hardening controls.]
+Version change: 2.6.0 → 2.7.0  [MINOR: Stage 3 implementation
+                                  closes three constitutional
+                                  follow-up TODOs that were
+                                  carried forward from v2.5.0
+                                  and v2.6.0:
+                                    - TODO(CONTACT_NUMBER_RULE_OWNER)
+                                      — the Teacher contactNumber
+                                      rule is owned by
+                                      `specs/001-teachers/spec.md`
+                                      FR-004 and is now restored
+                                      to the Singapore-context
+                                      `^[89]\d{7}$` regex on
+                                      POST and PUT paths.
+                                    - TODO(STAGE3_DELETE_RESPONSE_SHAPE)
+                                      — DELETE handlers return
+                                      `200` + `{ "ulid":
+                                      "<deleted-ulid>" }`; the
+                                      previous `204 No Content`
+                                      draft is retired.
+                                    - TODO(STAGE3_GET_SINGLE_RESOURCE_AMENDMENT)
+                                      — the two new single-
+                                      resource GET endpoints
+                                      ship and are the only data
+                                      source for the Edit pages.
+                                  No new principles are added
+                                  and no existing principle is
+                                  changed (Principles I–X are
+                                  unchanged).]
 
-Modified principles:
-  IV. Single Role: Administrator → Single Role: Authenticated Administrator
-       Title and intent changed. The previous principle was a strict
-       "no auth boundary, no per-action authorization" rule; the new
-       wording keeps the single-role posture (no new roles introduced)
-       but adds a session-based authentication boundary for the
-       existing Administrator role. The cross-cutting audit-column
-       `created_by` / `modified_by` semantics are unchanged — they
-       still store free-form strings; no FK migration to `users.id`
-       is in Stage 1 or Stage 2 scope.
+Modified principles: none (Principles I–X unchanged).
 
 Modified sections (non-principle):
   Stage Scope
-    - "Stage 1 — Explicitly Out of Scope" entry "Authentication,
-      authorization, sessions, or any non-administrator role" is
-      REMOVED.
-    - New "Stage 2 — In Scope" block added covering:
-        • Authentication feature (`specs/004-user-auth/spec.md`)
-        • CORS allow-list enforcement
-        • Content Security Policy (CSP) headers
-        • CSRF protection for state-changing API requests
-        • XSS prevention (input validation + output encoding + CSP
-          defense-in-depth)
-    - New "Stage 2 — Explicitly Out of Scope" block added listing the
-      controls that are intentionally deferred (MFA, OAuth/SSO,
-      password reset, self-registration, account lockout, rate
-      limiting, audit logging beyond the existing audit columns).
+    - "Stage 3 — In Scope" block is now IMPLEMENTED. The
+      two single-resource GETs (`GET /api/v1.0/teachers/[ulid]`
+      and `GET /api/v1.0/classes/[ulid]`), the two PUTs,
+      and the two DELETEs all ship with the v2.7.0 amendment.
+      The implementation closes the three carry-forward
+      TODOs listed in the version-change block above.
+
+Added principles: none.
+Removed principles: none.
+Removed sections: none.
+
+Templates requiring updates:
+  - .specify/templates/plan-template.md      ✅ no change
+  - .specify/templates/spec-template.md       ✅ no change
+  - .specify/templates/tasks-template.md      ✅ no change
+  - .specify/templates/checklist-template.md  ✅ no change
+  - .specify/templates/commands/*.md          ✅ none present
+
+Dependent artifacts flagged for manual follow-up (NOT amended
+by this constitution update — they are downstream of the
+per-feature specs and require their own per-spec
+Clarifications sessions):
+  - README.md — Stage 3 section added covering the six
+    new endpoints, the per-row `...` menu, the Edit
+    pages, the concurrent-edit toast, the Singapore
+    `^[89]\d{7}$` contact-number rule, the form-teacher
+    referential integrity guard, and the idempotent DELETE
+    semantics.
+  - specs/003-backend-api-db/spec.md — FR-013 status-code
+    table + FR-022 versioned-prefix inventory already
+    cover the Stage 3 amendments (per v2.5.0 + v2.6.0 sync
+    impact reports); no further amendment is required by
+    this v2.7.0 update.
+
+Follow-up TODOs (carry forward, minus the three closed):
+  - TODO(ANTD_TAILWIND_VERSION): unchanged.
+  - TODO(JOI_ALIGNMENT): unchanged.
+  - TODO(FUNCTIONAL_REVIEW): unchanged.
+  - TODO(PROFILE_PAGE_OUT_OF_SCOPE): unchanged.
+  - TODO(RATE_LIMITING_OUT_OF_SCOPE): unchanged.
+  - TODO(CRP_INTERPRETATION): unchanged.
+  - TODO(LOCAL_DEV_HTTP_POSTURE): unchanged.
+  - TODO(STAGE3_BULK_OUT_OF_SCOPE): unchanged.
+  - TODO(STAGE3_SOFT_DELETE_OUT_OF_SCOPE): unchanged.
+  - TODO(CONTACT_NUMBER_RULE_OWNER): RESOLVED — the
+    Singapore `^[89]\d{7}$` regex is restored on POST
+    and PUT paths; the cross-cutting module lives at
+    `lib/validation/contact-number.ts` and is consumed by
+    `lib/validation/teacher.ts`. Both unit tests pass.
+  - TODO(STAGE3_DELETE_RESPONSE_SHAPE): RESOLVED — DELETE
+    returns `200` + `{ "ulid": "<deleted-ulid>" }`;
+    the `204 No Content` draft is retired. The
+    `lib/api/{teachers,classes}/[ulid]/route.ts`
+    handlers and the `RowActionsMenu` UI are wired to
+    the new shape.
+  - TODO(STAGE3_GET_SINGLE_RESOURCE_AMENDMENT): RESOLVED
+    — the two single-resource GET endpoints ship in
+    v2.7.0 and are the only data source for the Edit
+    Teacher / Edit Class RSC pages. The
+    `TODO(SINGLE_RESOURCE_FETCH_OUT_OF_SCOPE)` marker
+    in `006-teachers-classes-mutations/spec.md` is
+    superseded by the implemented endpoints.
+
+Sync Impact Report (prior v2.5.0 → v2.6.0 amendment)
+=====================================================
+Version change: 2.5.0 → 2.6.0  [MINOR: Stage 3 In Scope
+                                  expanded with two new
+                                  single-resource GET endpoints
+                                  (`GET /api/v1.0/teachers/[ulid]`
+                                  and
+                                  `GET /api/v1.0/classes/[ulid]`).
+                                  These endpoints are the data
+                                  source for the Stage 3 Edit
+                                  Teacher / Edit Class pages owned
+                                  by
+                                  `specs/006-teachers-classes-mutations/spec.md`
+                                  FR-002 / FR-003; the previous
+                                  RSC + typeORM fallback in 006 is
+                                  superseded. The Stage 3 Out of
+                                  Scope entry "single-resource
+                                  fetch is a future-stage
+                                  amendment that requires a
+                                  per-spec clarification" is
+                                  REMOVED.]
+
+Modified principles: none (Principles I–X unchanged).
+
+Modified sections (non-principle):
+  Stage Scope
+    - "Stage 3 — In Scope" block extended with two new
+      single-resource GET endpoints (one on Teachers, one
+      on Classes). Both endpoints return the row in the
+      same shape as a single entry in the corresponding
+      list endpoint (per the
+      `003-backend-api-db/spec.md` Clarifications
+      Session 2026-06-20 (POST/GET reference object
+      shape) — i.e. the `subject` / `level` / `formTeacher`
+      fields are nested `{ ulid, name }` objects). Both
+      endpoints are authenticated (Principle IV — `401`
+      without a valid session cookie, inherited from
+      `003-backend-api-db/spec.md` FR-013) and CSRF-exempt
+      (GET is exempt per Principle IX.3). A `404 Not Found`
+      row is added to the cross-cutting FR-013 status-code
+      table for an unknown `ulid` (the existing 404 row
+      covers DELETE-second-call; the new GET-`[ulid]` 404
+      is a separate use of the same status).
+    - "Stage 3 — Explicitly Out of Scope" bullet
+      "`GET /api/v1.0/teachers/[ulid]` single-resource
+      fetch beyond the existing list — single-resource
+      fetch is a future-stage amendment that requires a
+      per-spec clarification" is REMOVED. The
+      single-resource fetch is now Stage 3 In Scope.
+
+Added principles: none.
+Removed principles: none.
+Removed sections: none.
+
+Templates requiring updates:
+  - .specify/templates/plan-template.md      ✅ no change (template is generic)
+  - .specify/templates/spec-template.md       ✅ no change (template is generic)
+  - .specify/templates/tasks-template.md      ✅ no change (template is generic)
+  - .specify/templates/checklist-template.md ✅ no change (template is generic)
+  - .specify/templates/commands/*.md          ✅ none present
+
+Dependent artifacts flagged for manual follow-up (NOT amended
+by this constitution update — they are downstream of the
+per-feature specs and require their own per-spec
+Clarifications sessions):
+  - specs/001-teachers/spec.md — gains a new FR-007b for
+    `GET /api/v1.0/teachers/[ulid]`, mirroring the
+    response shape of a single entry in
+    `GET /api/v1.0/teachers` (per the existing FR-007).
+    The FR-010 status-code table gains a `404 Not Found`
+    row (unknown `ulid`). A new Clarifications
+    Session 2026-06-22 documents the per-spec amendment.
+  - specs/002-classes/spec.md — gains a new FR-007b for
+    `GET /api/v1.0/classes/[ulid]`, mirroring the
+    response shape of a single entry in
+    `GET /api/v1.0/classes` (per the existing FR-007).
+    The FR-010 status-code table gains a `404 Not Found`
+    row (unknown `ulid`). A new Clarifications
+    Session 2026-06-22 documents the per-spec amendment.
+  - specs/003-backend-api-db/spec.md — FR-002
+    (Teachers API surface) and FR-003 (Classes API
+    surface) endpoint inventories gain one new row each
+    for the single-resource GETs. FR-022
+    (versioned-prefix inventory) is updated to list the
+    two new endpoints alongside the existing seven. A
+    new Clarifications Session 2026-06-22 documents the
+    per-spec amendment.
+  - specs/006-teachers-classes-mutations/spec.md — the
+    next /speckit-clarify pass on this spec will update
+    FR-002 (Edit Teacher page) and FR-003 (Edit Class
+    page) to consume the new
+    `GET /api/v1.0/teachers/[ulid]` /
+    `GET /api/v1.0/classes/[ulid]` endpoints rather
+    than the React Server Component + typeORM pattern.
+    The
+    `TODO(SINGLE_RESOURCE_FETCH_OUT_OF_SCOPE)` marker
+    in 006 Edge Cases is removed in that pass. This is
+    a per-spec amendment, not a constitutional change.
+
+Follow-up TODOs (carry forward, plus the new one):
+  - TODO(ANTD_TAILWIND_VERSION): unchanged.
+  - TODO(JOI_ALIGNMENT): unchanged.
+  - TODO(FUNCTIONAL_REVIEW): unchanged.
+  - TODO(PROFILE_PAGE_OUT_OF_SCOPE): unchanged.
+  - TODO(RATE_LIMITING_OUT_OF_SCOPE): unchanged.
+  - TODO(CRP_INTERPRETATION): unchanged.
+  - TODO(LOCAL_DEV_HTTP_POSTURE): unchanged.
+  - TODO(CONTACT_NUMBER_RULE_OWNER): unchanged.
+  - TODO(STAGE3_DELETE_RESPONSE_SHAPE): unchanged.
+  - TODO(STAGE3_BULK_OUT_OF_SCOPE): unchanged.
+  - TODO(STAGE3_SOFT_DELETE_OUT_OF_SCOPE): unchanged.
+  - TODO(STAGE3_GET_SINGLE_RESOURCE_AMENDMENT): the
+    006-teachers-classes-mutations/spec.md FR-002 /
+    FR-003 Edit pages currently use a server-side React
+    Server Component + typeORM lookup pattern. The next
+    /speckit-clarify pass on 006 will update FR-002 /
+    FR-003 to call the new
+    `GET /api/v1.0/teachers/[ulid]` /
+    `GET /api/v1.0/classes/[ulid]` endpoints instead of
+    the RSC pattern. The
+    `TODO(SINGLE_RESOURCE_FETCH_OUT_OF_SCOPE)` marker
+    in 006 Edge Cases is removed in that pass. The new
+    GET endpoints are the only Stage 3 data source for
+    the Edit pages; the RSC + typeORM fallback is
+    superseded.
+
+Sync Impact Report (prior v2.4.0 → v2.5.0 amendment)
+=====================================================
+Version change: 2.4.0 → 2.5.0  [MINOR: new Principle X (Domain
+                                  Mutations & Referential Integrity)
+                                  codifying DELETE / UPDATE rules on
+                                  Teachers and Classes; Stage Scope
+                                  extended with a Stage 3 section
+                                  authorising UPDATE + DELETE on
+                                  Teachers / Classes and the
+                                  restoration of the Singapore-context
+                                  `contactNumber` leading-digit rule;
+                                  the Stage 1 Out-of-Scope entry
+                                  "Update and Delete operations on
+                                  Teachers / Classes" is REMOVED.]
+
+Modified principles: none (Principles I–IX unchanged).
+
+Modified sections (non-principle):
+  Stage Scope
+    - "Stage 1 — Explicitly Out of Scope" entry "Update and Delete
+      operations on Teachers / Classes" is REMOVED (now Stage 3
+      In Scope).
+    - New "Stage 3 — In Scope" block added covering:
+        • `PUT /api/v1.0/teachers/[ulid]` and `PUT /api/v1.0/classes/[ulid]`
+        • `DELETE /api/v1.0/teachers/[ulid]` and `DELETE /api/v1.0/classes/[ulid]`
+        • Restoration of the Singapore-context contact number rule
+          on Teacher `contactNumber` (leading digit `8` or `9`,
+          8 digits total — the rule relaxed in
+          `001-teachers/spec.md` Clarifications Session 2026-06-21
+          is re-tightened)
+        • UI: per-row Edit + Delete actions on Teachers and Classes
+          lists; pre-populated Edit forms; Delete confirmation modal
+        • Idempotent DELETE semantics (404 on second DELETE)
+    - New "Stage 3 — Explicitly Out of Scope" block added listing the
+      mutations intentionally deferred (bulk DELETE/UPDATE, soft
+      delete, archive, restore, PATCH, cascading delete, new
+      entities, new auth controls, FK migration of `created_by` /
+      `modified_by` to `users.id`).
 
 Added principles:
-  IX. Security & Hardening (mandatory web-security controls).
-      New principle with the same MUST/SHOULD discipline as I–VIII.
-      Covers CORS, CSP, CSRF, and XSS prevention in a single section
-      because they are mutually reinforcing — CORS without CSP, or
-      CSP without CSRF protection, would leave the application
-      vulnerable even though the other control is in place.
+  X. Domain Mutations & Referential Integrity (mandatory rules
+     for UPDATE and DELETE on Teachers and Classes).
+     New principle with the same MUST/SHOULD discipline as I–IX.
+     Codifies three rules: (a) DELETE on a Teacher currently
+     assigned as a form teacher MUST be rejected with 409 Conflict;
+     (b) DELETE on a Class is unconstrained at the database layer
+     but idempotent at the API layer; (c) UPDATE on either resource
+     MUST re-run every invariant enforced by POST (subject active,
+     email unique, form teacher uniqueness, level active). All
+     DELETE/UPDATE routes inherit authentication (Principle IV),
+     CSRF (Principle IX.3), and Joi validation (Principle VII)
+     without exception.
 
 Removed principles: none.
 Removed sections: none.
@@ -59,50 +287,59 @@ Templates requiring updates:
   - .specify/templates/commands/*.md          ✅ none present
 
 Dependent artifacts flagged for manual follow-up (NOT amended by this
-constitution update — they are downstream of `specs/004-user-auth/` and
-the per-feature specs and require their own PRs):
-  - ⚠ specs/004-user-auth/spec.md — Section "Constitutional Note
-    (gate before planning)" was written before this amendment and
-    references the pre-amendment Stage 1 scope as the gate. That
-    section is now HISTORICAL context (it documents the gap that
-    this amendment closes) and SHOULD be reviewed at
-    `/speckit-plan` time, but no structural change is required.
-  - ⚠ specs/003-backend-api-db/spec.md — the cross-cutting
-    status-code table (FR-013) currently lists
-    `400 / 404 / 409 / 415 / 500 / 503`. Stage 2 adds `401` for the
-    "no valid session" case. The 401 entry is propagated by the
-    `specs/004-user-auth/spec.md` Clarifications section (Session
-    2026-06-21 — cross-cutting propagation) but the 003 spec itself
-    should be updated to reflect the new status code in its next
-    edit cycle.
-  - ⚠ specs/003-backend-api-db/contracts/common.yaml — same
-    status-code propagation; the shared contract document should
-    gain a `401` row. (The versioned-path propagation
-    `/api/login` → `/api/v1.0/login` is a separate
-    `003-backend-api-db` Clarification Session 2026-06-21
-    entry that has been propagated to `004-user-auth/spec.md` and
-    `005-security-hardening/spec.md`.)
-  - ⚠ README.md — "Architecture", "API contract", "Stage 1
-    assumptions" sections reference the Stage 1 posture verbatim
-    ("No auth, no sessions"). They SHOULD be updated to describe
-    Stage 2's authentication + hardening posture at the next README
-    edit. The new directories (`app/api/login/`, `app/api/logout/`,
-    `app/api/me/`, `app/login/`, `lib/auth/`, `lib/security/`) and
-    the new `docker-compose.yml` Redis service (or user-managed
-    Redis) SHOULD be added to the Directory layout and Quick-start
-    sections.
-  - ⚠ next.config.mjs — security headers (CSP, HSTS, X-Frame-Options,
-    X-Content-Type-Options, Referrer-Policy) are not yet configured.
-    This is implementation work for the Stage 2 plan, not a
-    constitutional amendment.
-  - ⚠ docker/docker-compose.yml — no Redis service yet. Either a
-    new `redis` service is added here OR the README documents the
-    user-managed Redis as the runtime prerequisite (consistent with
-    the FR-016 pattern for MySQL). Decision is in the Stage 2 plan.
-  - ⚠ requirements/Full Stack Assignment.md — informational only;
-    the original requirement already mentions "secure" and
-    "authentication" as candidate concerns, so this amendment
-    brings the implementation in line with the original brief.
+constitution update — they are downstream of the per-feature specs
+and require their own PRs):
+  - ⚠ specs/001-teachers/spec.md — Clarifications Session
+    2026-06-21 (operational rules) relaxed the Teacher
+    `contactNumber` rule from `^[89]\d{7}$` to `^\d{8}$`
+    (no leading-digit restriction). Stage 3 v2.5.0 in-scope
+    block RESTORES the original Singapore-context pattern.
+    A new Clarifications session (Stage 3, ~2026-06-22) is
+    required to update FR-004, the Joi schema regex
+    (`^\\d{8}$` → `^[89]\\d{7}$`), and the corresponding
+    unit tests. The contact number is owned by the
+    `001-teachers` spec, not by this constitution; the
+    constitution's job is to authorise the change in scope
+    so the spec can amend itself.
+  - ⚠ specs/002-classes/spec.md — Clarifications Session
+    2026-06-18 Edge Cases bullet "What happens when a teacher
+    is deleted (or otherwise no longer available) after a
+    class was created with that teacher as the form teacher?
+    — This scenario is out of scope for v1" is SUPERSEDED by
+    Principle X.1. The 002-classes spec needs a Clarifications
+    entry noting that DELETE-Teacher is now blocked at the
+    API layer when the teacher is a current form teacher;
+    the "out of scope for v1" wording becomes "blocked by
+    referential integrity; admin reassigns the form teacher
+    first" (Stage 3 amendment).
+  - ⚠ specs/003-backend-api-db/spec.md — cross-cutting
+    status-code table (FR-013) should gain explicit rows for
+    `200 OK` (UPDATE success) and `404 Not Found` (DELETE on
+    a missing `ulid`). Stage 2 already added `401`; Stage 3
+    adds `200` and clarifies the `404` semantics. The
+    `204 No Content` row is NOT added — Stage 3 returns
+    `200` with the deleted row's `ulid` echo on successful
+    DELETE for consistency with the existing JSON envelope
+    contract.
+  - ⚠ specs/001-teachers/contracts/teachers.yaml and
+    specs/002-classes/contracts/classes.yaml — Stage 3 adds
+    PUT and DELETE methods to each contract. The
+    request/response schemas for `PUT` mirror the POST shape
+    (full-resource replacement, not partial update). The
+    `DELETE` response shape is `{ "ulid": "..." }` echoed
+    back with HTTP `200` (Stage 3 decision — not 204, so the
+    envelope is uniform with the rest of the API).
+  - ⚠ README.md — "Stage 1 assumptions" currently lists
+    "Update and delete operations on Teachers / Classes" as
+    out of scope; that line should be removed and a Stage 3
+    section added describing the new PUT / DELETE endpoints
+    and the Singapore contact-number constraint.
+  - ⚠ specs/001-teachers/plan.md and specs/002-classes/plan.md —
+    the API tables list only POST + GET. Stage 3 adds two
+    more rows (PUT, DELETE) to each table. No new endpoints
+    are introduced; the existing Joi schemas gain PUT-side
+    variants and DELETE Joi schemas (empty-body schemas that
+    still run the validation step per Principle VII).
 
 Follow-up TODOs (carry forward, plus the new ones):
   - TODO(ANTD_TAILWIND_VERSION): pin the `antd`, `tailwindcss`,
@@ -123,8 +360,8 @@ Follow-up TODOs (carry forward, plus the new ones):
     future-stage amendment (Principle V — YAGNI).
   - TODO(RATE_LIMITING_OUT_OF_SCOPE): brute-force protection beyond
     Joi rate checks (e.g., per-IP login attempt limits,
-    captcha-after-N-failures) is NOT in Stage 2 scope. A future
-    stage may add it under Principle V (YAGNI).
+    captcha-after-N-failures) is NOT in Stage 2 or Stage 3 scope.
+    A future stage may add it under Principle V (YAGNI).
   - TODO(CRP_INTERPRETATION): the user's amendment request
     ("secure on CORS, XXS CSRF, CRP") was interpreted as
     **CORS + XSS + CSRF + CSP (Content Security Policy)**. "CRP" is
@@ -142,6 +379,28 @@ Follow-up TODOs (carry forward, plus the new ones):
     the runtime configuration. The exact mechanism is decided in
     the Stage 2 plan; the constitutional requirement is just that
     the relaxation is environment-driven, not hard-coded.
+  - TODO(CONTACT_NUMBER_RULE_OWNER): the Singapore contact-number
+    pattern (`^[89]\d{7}$`) is owned by `specs/001-teachers/spec.md`
+    FR-004, NOT by this constitution. The constitution's job in
+    v2.5.0 is to authorise the restoration in the Stage 3 In Scope
+    block; the per-spec amendment (Clarifications session + Joi
+    regex update + unit-test update) is the implementation step.
+  - TODO(STAGE3_DELETE_RESPONSE_SHAPE): Stage 3 returns
+    `{ "ulid": "..." }` with HTTP 200 on successful DELETE rather
+    than HTTP 204 No Content, for envelope consistency with the
+    rest of the API. If a future stage needs strict REST
+    semantics (204 No Content, no body), that is a per-feature
+    amendment, not a constitutional change.
+  - TODO(STAGE3_BULK_OUT_OF_SCOPE): bulk DELETE / bulk UPDATE
+    (e.g., `DELETE /api/v1.0/teachers?ids=...`) is explicitly out
+    of Stage 3 scope per the Stage 3 Out-of-Scope block. Adding
+    bulk operations requires a future-stage amendment to
+    Principle X.
+  - TODO(STAGE3_SOFT_DELETE_OUT_OF_SCOPE): soft delete / archive
+    (`deleted_at`, `deleted_by` columns) is explicitly out of
+    Stage 3 scope. Stage 3 DELETE is a hard delete. Soft delete
+    is a future-stage amendment requiring schema additions and a
+    rewrite of the Teacher / Class repositories.
 -->
 
 # pvt-edu-admin-project Constitution
@@ -384,6 +643,105 @@ full compromise. They are the OWASP-recommended baseline; each one
 closes a specific class of attack, and the four together close the
 classes most likely to hit a small internal admin tool.
 
+### X. Domain Mutations & Referential Integrity (NON-NEGOTIABLE in Stage 3)
+
+Stage 3 introduces the `UPDATE` and `DELETE` mutations on Teachers
+and Classes. Every mutation MUST preserve the invariants that the
+`POST` flow established. Three rules:
+
+1. **DELETE on a Teacher MUST be rejected when the teacher is
+   currently assigned as the form teacher of any class.** The
+   referential-integrity check runs before the delete; the route
+   returns HTTP `409 Conflict` with the standard
+   `{ "error": "Teacher is assigned as form teacher of <n> class(es)" }`
+   envelope. The administrator MUST first reassign (via
+   `PUT /api/v1.0/classes/[ulid]` updating the affected class's
+   `formTeacher.ulid`) or delete the affected class(es) before
+   retrying the teacher delete. This is the canonical example of a
+   domain constraint that the `POST` path did not need to enforce
+   (because the `POST` is a fresh row) but the `DELETE` path MUST
+   enforce (because it would otherwise leave a class with a
+   dangling `form_teacher_id` — the `UNIQUE` constraint on
+   `classes.form_teacher_id` does not protect a class whose
+   referenced teacher has been removed).
+
+2. **DELETE on a Class is unconstrained at the database layer
+   (no other table references `classes.id` outside the audit
+   columns — there is no `class_id` FK on `teachers`,
+   `subjects`, or `levels`).** It MUST still be authenticated
+   (Principle IV), CSRF-protected (Principle IX.3), Joi-validated
+   (Principle VII — the request body is empty but the route
+   handler still runs the validation step), and idempotent:
+   a second `DELETE` on the same `ulid` returns
+   `404 Not Found` with the standard
+   `{ "error": "Class not found" }` envelope, NOT a `5xx`. The
+   first successful `DELETE` returns `200 OK` with
+   `{ "ulid": "<deleted-class-ulid>" }` so the client can confirm
+   which row was removed (the envelope is uniform with the rest
+   of the API; `204 No Content` is NOT used — see
+   TODO(STAGE3_DELETE_RESPONSE_SHAPE) in the Sync Impact Report).
+
+3. **UPDATE on a Teacher or Class MUST re-run every invariant
+   that the `POST` flow enforces**, with the field-level
+   constraints re-checked. `PUT` is a full-resource replacement
+   (Stage 3 ships full-resource `PUT` only — no `PATCH`; see
+   Stage 3 Out of Scope):
+   - The teacher's new `subject.ulid`, if supplied, MUST
+     reference an **active** `subjects` row
+     (per `001-teachers/spec.md` FR-005a).
+   - The teacher's new `email`, if supplied, MUST NOT collide
+     with another teacher's email (per FR-005, 001-teachers);
+     the `UNIQUE` constraint on `teachers.email` enforces it
+     race-safely and the route translates the violation into
+     `409 Conflict` with `{ "error": "Email already in use" }`.
+   - The teacher's new `contactNumber`, if supplied, MUST match
+     the Singapore-context pattern `^[89]\d{7}$` — exactly
+     8 digits, must start with `8` or `9` (the constraint
+     restored in the Stage 3 In Scope block; the relaxed
+     `^\d{8}$` pattern from `001-teachers/spec.md`
+     Clarifications Session 2026-06-21 is superseded).
+   - The class's new `level.ulid`, if supplied, MUST reference
+     an **active** `levels` row (per FR-005a, 002-classes).
+   - The class's new `formTeacher.ulid`, if supplied, MUST
+     reference a registered teacher (per FR-004, 002-classes)
+     AND that teacher MUST NOT already be the form teacher of a
+     **different** class (per FR-005, 002-classes — uniqueness
+     is by `classes.form_teacher_id`, so the class updating to
+     the same form teacher it already has is permitted; only a
+     collision with a *different* class is rejected).
+   - Email, `subject`, `level`, and `formTeacher` are looked up
+     by `ulid` (the nested `{ ulid, name }` shape — per
+     `003-backend-api-db` Clarifications Session 2026-06-20).
+   - On success, UPDATE returns the updated row in the same
+     shape as the corresponding GET entry, with HTTP `200 OK`.
+   - On failure, UPDATE returns the same JSON error envelope
+     (`{ "error": "..." }`) and HTTP status code as the
+     equivalent POST failure (`400` / `404` / `409`).
+
+   UPDATE MUST NOT bypass CSRF (Principle IX.3), authentication
+   (Principle IV), or Joi validation (Principle VII). Every
+   `PUT` request carries a `Content-Type: application/json`
+   body, an `X-CSRF-Token` header matching the `csrfToken`
+   cookie, and a valid session cookie; the same `415` rule
+   that guards POST also guards PUT.
+
+   Unit tests (Principle III) MUST cover the three negative
+   paths for each resource: (a) DELETE-Teacher blocked when the
+   teacher is a current form teacher, (b) DELETE idempotency
+   (second DELETE returns 404), (c) UPDATE re-running every
+   POST-side invariant.
+
+**Rationale:** `POST` enforces invariants at row-creation time;
+without a corresponding DELETE / UPDATE constraint the database
+silently drifts into invalid states (orphaned `form_teacher_id`,
+duplicate form teachers, references to deactivated subjects or
+levels, contact numbers that no longer match the
+Singapore-mobile assumption). The principle exists to make those
+constraints explicit, testable, and reviewable; it is the
+natural counterpart to Principle VII (Joi) for the mutation
+path and is what prevents the "v1 worked, but a year of
+production data is corrupt" failure mode.
+
 ## Stage Scope
 
 This section pins what the current constitution actually authorises.
@@ -405,9 +763,10 @@ A feature spec that exceeds this scope MUST first amend this section
 **Stage 1 — Explicitly Out of Scope** (requires a constitutional
 amendment to enter scope; the "Authentication, authorization,
 sessions, or any non-administrator role" entry was REMOVED by the
-v2.4.0 amendment and is now Stage 2 In Scope):
+v2.4.0 amendment and is now Stage 2 In Scope; the "Update and
+Delete operations on Teachers / Classes" entry was REMOVED by
+the v2.5.0 amendment and is now Stage 3 In Scope):
 
-- Update and Delete operations on Teachers / Classes.
 - New entities beyond Teachers and Classes.
 - Production deployment, observability, or non-MySQL storage.
 
@@ -465,6 +824,139 @@ amendment to enter scope):
   CSP, CORS, CSRF, XSS. The remaining COOP / CORP / COEP triad
   is a documented future-stage amendment (see
   TODO(CRP_INTERPRETATION) in the Sync Impact Report).
+
+**Stage 3 — In Scope (authorised by v2.5.0; expanded by v2.6.0):**
+
+- **`GET /api/v1.0/teachers/[ulid]`** (NEW, authorised by v2.6.0)
+  — single-resource fetch on a Teacher. Returns the teacher
+  record in the same shape as a single entry in
+  `GET /api/v1.0/teachers` (per
+  `001-teachers/spec.md` FR-007 — `ulid`, `name`, `subject` as
+  nested `{ ulid, name }`, `email`, `contactNumber`) with HTTP
+  `200 OK` on success, or `404 Not Found` with
+  `{ "error": "Teacher not found" }` on an unknown `ulid`. The
+  endpoint is authenticated (Principle IV — returns `401`
+  without a valid session cookie, inherited from
+  `003-backend-api-db/spec.md` FR-013) and CSRF-exempt (GET
+  is exempt per Principle IX.3). The endpoint is the data
+  source for the Stage 3 Edit Teacher page
+  (`/teachers/[ulid]/edit`, owned by
+  `specs/006-teachers-classes-mutations/spec.md` FR-002);
+  the previous RSC + typeORM fallback in 006 is superseded
+  by this endpoint.
+- **`GET /api/v1.0/classes/[ulid]`** (NEW, authorised by v2.6.0)
+  — single-resource fetch on a Class. Returns the class
+  record in the same shape as a single entry in
+  `GET /api/v1.0/classes` (per `002-classes/spec.md` FR-007
+  — `ulid`, `name`, `level` as nested `{ ulid, name }`,
+  `formTeacher` as nested `{ ulid, name }`) with HTTP
+  `200 OK` on success, or `404 Not Found` with
+  `{ "error": "Class not found" }` on an unknown `ulid`. The
+  endpoint is authenticated (Principle IV) and CSRF-exempt
+  (GET is exempt per Principle IX.3). The endpoint is the
+  data source for the Stage 3 Edit Class page
+  (`/classes/[ulid]/edit`, owned by
+  `specs/006-teachers-classes-mutations/spec.md` FR-003);
+  the previous RSC + typeORM fallback in 006 is superseded
+  by this endpoint.
+- **`PUT /api/v1.0/teachers/[ulid]`** — full-resource update on a
+  Teacher. All four mutable fields are submitted together
+  (`name`, `subject`, `email`, `contactNumber`); `ulid` is
+  immutable and is taken from the path parameter, not the body.
+  See Principle X.3 for the invariant rules.
+- **`PUT /api/v1.0/classes/[ulid]`** — full-resource update on a
+  Class. All three mutable fields are submitted together
+  (`name`, `level`, `formTeacher`); `ulid` is taken from the path.
+- **`DELETE /api/v1.0/teachers/[ulid]`** — hard delete on a
+  Teacher; blocked with `409 Conflict` if the teacher is
+  currently assigned as form teacher of any class
+  (Principle X.1).
+- **`DELETE /api/v1.0/classes/[ulid]`** — hard delete on a
+  Class; always permitted at the database layer; idempotent at
+  the API layer (Principle X.2).
+- **Singapore-context `contactNumber` rule restoration** on the
+  Teacher field: exactly 8 digits, must start with `8` or `9`
+  (pattern `^[89]\d{7}$`). This re-tightens the constraint that
+  `specs/001-teachers/spec.md` Clarifications Session 2026-06-21
+  relaxed to `^\d{8}$` (no leading-digit restriction). The rule
+  is owned by the `001-teachers` spec (FR-004) and is enforced by
+  Joi; no typeORM schema change is needed because the column
+  already stores `VARCHAR(15)` (well above the 8-digit
+  requirement). The corresponding unit tests are updated to
+  cover the leading-digit rejection path.
+- **UI**:
+  - Teachers list rows and Classes list rows gain per-row
+    **Edit** and **Delete** actions (composed from `antd`
+    `Button` primitives, styled with Tailwind utility classes
+    per Principle VIII). The Edit action navigates to a
+    pre-populated form (the existing Add Teacher / Add Class
+    forms gain an "edit mode" gated by the presence of a path
+    parameter, reusing the same Joi-validated body shape as
+    POST).
+  - Delete opens an `antd` `Modal.confirm` with the row's name
+    embedded in the confirmation copy ("Delete teacher
+    John Doe? This action cannot be undone.") and a destructive
+    `Delete` button (red, per the existing Tailwind token
+    palette).
+  - After successful Edit or Delete, the list refreshes (no
+    full-page reload — the existing client-side fetch pattern
+    is reused).
+  - The Edit form's CSRF token is fetched via the existing
+    `lib/security/csrf-client.ts → getCsrfToken()` helper
+    (introduced by `005-security-hardening`); both `PUT` and
+    `DELETE` send the `X-CSRF-Token` header.
+- **Domain-constraint unit tests** (Principle III) covering:
+  - DELETE-Teacher rejected when the teacher is a current
+    form teacher (with the exact `409` envelope).
+  - DELETE-Class idempotency (second DELETE returns 404).
+  - UPDATE-Teacher re-running subject-active and email-unique
+    invariants.
+  - UPDATE-Class re-running level-active and form-teacher-
+    uniqueness invariants.
+  - Singapore contact-number regex rejects values that don't
+    start with `8` or `9` (negative test for the restored
+    constraint).
+
+**Stage 3 — Explicitly Out of Scope** (requires a constitutional
+amendment to enter scope):
+
+- Bulk DELETE / bulk UPDATE (no batch endpoints — every
+  mutation operates on a single `ulid`).
+- Soft delete, archive, or restore-on-delete (no `deleted_at` /
+  `deleted_by` columns are introduced; the audit columns
+  `modified_at` / `modified_by` continue to record the last
+  `PUT` write — but a `DELETE` does not write them; it
+  simply removes the row). Restoring a deleted row requires a
+  future-stage amendment that adds the audit columns and the
+  soft-delete repository pattern.
+- Undo / confirmation-window delete (no toast-based undo
+  beyond the immediate `Modal.confirm`; once the DELETE call
+  returns `200`, the row is gone).
+- Partial-update (`PATCH`) endpoints (Stage 3 ships
+  full-resource `PUT` only — every updatable field is
+  required on every `PUT` call).
+- Cascading delete (deleting a teacher MUST NOT cascade to
+  classes — the `409` path forces explicit reassignment; this
+  matches the Stage 1+ invariant that form-teacher uniqueness
+  is enforced by the application layer, not the database).
+- New entities beyond Teachers and Classes (the `subjects`,
+  `levels`, and `users` reference tables are still
+  read-only in Stage 3; admin authoring of those tables is a
+  future-stage amendment).
+- New endpoints beyond the six listed above (no
+  `POST /api/v1.0/teachers/bulk-delete`, no bulk
+  endpoints — every mutation operates on a single
+  `ulid`; the two new single-resource GET endpoints are
+  in Stage 3 In Scope and supersede the previously-deferred
+  single-resource fetch).
+- New authentication controls, new security hardening controls
+  (Stage 3 inherits Principles IV and IX unchanged — the
+  existing auth + CSRF + CORS + CSP + XSS posture is
+  sufficient for the new mutations).
+- Foreign-key migration of `created_by` / `modified_by` on
+  `teachers` / `classes` / `subjects` / `levels` to
+  `users.id` (still deferred per Principle V — YAGNI;
+  cumulative Stage 2 + Stage 3 deferral list).
 
 ## Technical Stack Constraints
 
@@ -556,7 +1048,7 @@ amendment to enter scope):
   README is incomplete.
 - Pull requests for code MUST link the active spec, plan, and tasks.
   Reviewers MUST reject PRs whose artifacts were not produced through the
-  SDD skills, and PRs that violate Principle II–IX.
+  SDD skills, and PRs that violate Principle II–X.
 - When in doubt, prefer amending this constitution over maintaining
   out-of-band conventions.
 
@@ -573,14 +1065,20 @@ amendment to enter scope):
   - **PATCH** — clarifications, wording fixes, non-semantic refinements.
 - Compliance review: every `/speckit-implement` run MUST include a
   Constitution Check section in `plan.md`; deviations from Principles
-  II–IX require an entry in `plan.md` → Complexity Tracking with the
+  II–X require an entry in `plan.md` → Complexity Tracking with the
   simpler alternative that was rejected and why. The Constitution Check
   MUST, for security-sensitive features (any feature that touches
   Principle IV or Principle IX), explicitly verify the four hardening
   controls (CORS allow-list, CSP header, CSRF token middleware, XSS
   posture) are present and configured per Principle IX.
+  The Constitution Check MUST, for any feature that introduces a
+  mutation covered by Principle X (UPDATE / DELETE on Teachers or
+  Classes), explicitly verify the three Principle X rules
+  (form-teacher referential integrity on DELETE-Teacher,
+  idempotent DELETE on Classes, full re-run of POST invariants on
+  UPDATE) are unit-tested and reflected in the Joi schemas.
 - The authoritative runtime guidance for coding agents is `CLAUDE.md`;
   the authoritative process guidance is the Spec Kit skill documentation
   under `.claude/skills/speckit-*`.
 
-**Version**: 2.4.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-21 (PATCH: clarified the versioned-path commitment already present in the Stage 2 In Scope block; propagated to 003 FR-022, 004 spec, 005 spec)
+**Version**: 2.6.0 | **Ratified**: 2026-06-18 | **Last Amended**: 2026-06-22 (MINOR: Stage 3 In Scope expanded with two new single-resource GET endpoints — `GET /api/v1.0/teachers/[ulid]` and `GET /api/v1.0/classes/[ulid]`; the Stage 3 Out of Scope entry "single-resource fetch is a future-stage amendment that requires a per-spec clarification" is REMOVED; the data source for the 006 Edit Teacher / Edit Class pages is now the new single-resource GET endpoints, superseding the RSC + typeORM fallback; 001-teachers / 002-classes / 003-backend-api-db specs gain per-spec Clarifications sessions adding the new endpoints to the per-feature FR inventories and the cross-cutting versioned-prefix inventory — per-spec amendments, not constitutional changes)

@@ -1,13 +1,35 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { notification } from "antd";
 import { FormField } from "@/components/FormField";
 import { Button } from "@/components/Button";
 import { Select } from "@/components/Select";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
+/**
+ * TeacherForm — used by both the Add Teacher flow and the Edit Teacher
+ * flow. The presence of `initialValues` switches the form into edit
+ * mode (gated by the presence of the `[ulid]` path parameter on the
+ * edit page). In edit mode:
+ *   - The fields are pre-populated from `initialValues`.
+ *   - The submit handler dispatches PUT (not POST).
+ *   - The form captures `modifiedAt` (the row's GET-load
+ *     `modified_at` value) so the `use-edit-submit` hook can compare
+ *     it to the PUT 200 `previousModifiedAt` for the concurrent-edit
+ *     toast (per FR-016).
+ */
 export interface TeacherFormProps {
   subjects: { ulid: string; name: string; active: boolean }[];
+  initialValues?: {
+    ulid: string;
+    name: string;
+    subject: { ulid: string; name: string };
+    email: string;
+    contactNumber: string;
+    /** The `modified_at` value the form captured on mount (ISO string). */
+    modifiedAt?: string;
+  };
 }
 
 function mapError(field: string, message: string): string {
@@ -31,20 +53,15 @@ function mapError(field: string, message: string): string {
   return message;
 }
 
-/**
- * Add Teacher form. The wire shape submitted to
- * `POST /api/v1.0/teachers` is the nested `{ ulid, name }` shape
- * per `003-backend-api-db/spec.md` Clarifications, Session
- * 2026-06-20 (POST/GET reference object shape). The form keeps a
- * flat `subject` (the user picks a subject by name in the dropdown)
- * and looks up the corresponding `ulid` at submit time.
- */
-export function TeacherForm({ subjects }: TeacherFormProps) {
+export function TeacherForm({ subjects, initialValues }: TeacherFormProps) {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [subject, setSubject] = useState("");
-  const [email, setEmail] = useState("");
-  const [contactNumber, setContactNumber] = useState("");
+  const isEdit = Boolean(initialValues);
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [subject, setSubject] = useState(initialValues?.subject.name ?? "");
+  const [email, setEmail] = useState(initialValues?.email ?? "");
+  const [contactNumber, setContactNumber] = useState(
+    initialValues?.contactNumber ?? "",
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -65,20 +82,46 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
         setSubmitting(false);
         return;
       }
-      const res = await fetch("/api/v1.0/teachers", {
-        method: "POST",
+      const body = {
+        name,
+        subject: { ulid: selectedSubject.ulid, name: selectedSubject.name },
+        email,
+        contactNumber,
+      };
+      const url = isEdit
+        ? `/api/v1.0/teachers/${initialValues!.ulid}`
+        : "/api/v1.0/teachers";
+      const method = isEdit ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           "X-CSRF-Token": getCsrfToken() ?? "",
         },
-        body: JSON.stringify({
-          name,
-          subject: { ulid: selectedSubject.ulid, name: selectedSubject.name },
-          email,
-          contactNumber,
-        }),
+        body: JSON.stringify(body),
       });
-      if (res.status === 201) {
+      if (res.status === 200 || res.status === 201) {
+        // Edit mode — concurrent-edit toast (FR-016 / Clarifications Q3).
+        if (isEdit && initialValues?.modifiedAt) {
+          const data = (await res.json().catch(() => ({}))) as {
+            previousModifiedAt?: string;
+          };
+          if (
+            data.previousModifiedAt &&
+            data.previousModifiedAt !== initialValues.modifiedAt
+          ) {
+            const t = new Date(data.previousModifiedAt);
+            const hh = String(t.getHours()).padStart(2, "0");
+            const mm = String(t.getMinutes()).padStart(2, "0");
+            const ss = String(t.getSeconds()).padStart(2, "0");
+            notification.warning({
+              message: "Concurrent edit detected",
+              description: `Note: this record was edited by another administrator at ${hh}:${mm}:${ss} — your changes are saved, but please verify.`,
+              placement: "topRight",
+              duration: 8,
+            });
+          }
+        }
         router.push("/teachers");
         return;
       }
@@ -91,7 +134,7 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
           next.subject = mapError("subject", data.error ?? "");
         else if (m.includes("email"))
           next.email = mapError("email", data.error ?? "");
-        else if (m.includes("contactnumber") || m.includes("pattern"))
+        else if (m.includes("contactnumber") || m.includes("pattern") || m.includes("start"))
           next.contactNumber = mapError(
             "contactNumber",
             data.error ?? "",
@@ -99,9 +142,24 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
         else setFormError(data.error ?? "Please review the highlighted fields.");
         setErrors(next);
       } else if (res.status === 409) {
-        setFormError("A teacher with this email already exists.");
+        // For PUT, the field-level 409 is the duplicate email or
+        // unknown subject. Show inline.
+        if (isEdit) {
+          const m = (data.error ?? "").toLowerCase();
+          if (m.includes("email")) {
+            setErrors({ email: "This email address is already in use." });
+          } else if (m.includes("subject")) {
+            setErrors({ subject: "Please select a valid subject." });
+          } else {
+            setFormError(data.error ?? "Conflict — please review.");
+          }
+        } else {
+          setFormError("A teacher with this email already exists.");
+        }
       } else if (res.status === 415) {
         setFormError("Submission format was not accepted. Please try again.");
+      } else if (res.status === 404) {
+        setFormError("Teacher not found. It may have been deleted.");
       } else {
         setFormError(data.error ?? "Could not save the teacher. Please try again.");
       }
@@ -170,7 +228,13 @@ export function TeacherForm({ subjects }: TeacherFormProps) {
           ← Back
         </Button>
         <Button type="submit" variant="primary" disabled={submitting}>
-          {submitting ? "Adding…" : "Add Teacher"}
+          {submitting
+            ? isEdit
+              ? "Saving…"
+              : "Adding…"
+            : isEdit
+              ? "Save Teacher"
+              : "Add Teacher"}
         </Button>
       </div>
     </form>

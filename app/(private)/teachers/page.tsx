@@ -61,7 +61,7 @@ export default function TeachersPage() {
           action={{ label: "Add Teacher", href: "/teachers/add" }}
         />
       ) : data ? (
-        <TeacherTable teachers={data} />
+        <TeacherTable teachers={data} onTeacherDeleted={() => void load()} />
       ) : null}
     </>
   );

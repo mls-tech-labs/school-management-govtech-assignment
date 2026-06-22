@@ -50,21 +50,37 @@ export interface AuthedRequest extends NextRequest {
   };
 }
 
-export type AuthedHandler = (req: AuthedRequest) => Promise<Response>;
+/**
+ * `AuthedHandler` — the inner-handler shape `withAuth` wraps. Accepts
+ * an optional typed second `ctx` argument so Stage 3 dynamic-route
+ * handlers (`/api/v1.0/{teachers,classes}/[ulid]`) can receive their
+ * `{ params }` context. The default `TCtx` is `unknown` for legacy
+ * handlers (no ctx needed).
+ */
+export type AuthedHandler<TCtx = unknown> = (
+  req: AuthedRequest,
+  ctx?: TCtx,
+) => Promise<Response>;
 
 /**
  * `withAuth(handler)` — wraps an authenticated route handler. On
  * hit, attaches `req.auth = { userId, ulid, sessionIdPrefix }`
  * and calls the inner handler. On miss / error, returns the
  * appropriate error envelope without ever calling the handler.
+ *
+ * The optional second `ctx` argument is forwarded to the inner
+ * handler so Stage 3 dynamic-route handlers (`/api/v1.0/{teachers,
+ * classes}/[ulid]`) can receive their `{ params }` context.
  */
-export function withAuth(handler: AuthedHandler): AuthedHandler {
-  return async (req: AuthedRequest): Promise<Response> => {
+export function withAuth<TCtx = unknown>(
+  handler: AuthedHandler<TCtx>,
+): AuthedHandler<TCtx> {
+  return async (req: AuthedRequest, ctx?: TCtx): Promise<Response> => {
     const method = req.method.toUpperCase();
     const path = req.nextUrl.pathname;
     const exemptKey = `${method} ${path}`;
     if (PUBLIC_PATHS.has(exemptKey)) {
-      return handler(req);
+      return handler(req, ctx);
     }
 
     const sessionId = readSessionCookie(req);
@@ -99,7 +115,7 @@ export function withAuth(handler: AuthedHandler): AuthedHandler {
       sessionIdPrefix: sessionIdPrefixOf(sessionId) ?? "",
     };
 
-    return handler(req);
+    return handler(req, ctx);
   };
 }
 

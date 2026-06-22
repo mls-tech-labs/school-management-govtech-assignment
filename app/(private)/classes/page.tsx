@@ -55,7 +55,7 @@ export default function ClassesPage() {
           action={{ label: "Add Class", href: "/classes/add" }}
         />
       ) : data ? (
-        <ClassTable classes={data} />
+        <ClassTable classes={data} onClassDeleted={() => void load()} />
       ) : null}
     </>
   );

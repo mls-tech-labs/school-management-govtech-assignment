@@ -20,25 +20,35 @@ import { requireJson } from "./content-type";
  *     handler's responsibility (via `toApiError` in `./db-error`). The
  *     wrapper only catches *unhandled* throws, which by definition are
  *     bugs, not contract violations.
+ *
+ * The handler signature accepts a typed `ctx` argument so Stage 3
+ * dynamic-route handlers (`/api/v1.0/{teachers,classes}/[ulid]`) can
+ * receive their `{ params: Promise<{ ulid: string }> }` context
+ * without losing the inferred `RouteCtx` type through the wrapper
+ * chain. The default `unknown` keeps the legacy call sites (no ctx)
+ * compile-clean.
  */
-export type Handler = (req: NextRequest) => Promise<Response>;
+export type Handler<TCtx = unknown> = (
+  req: NextRequest,
+  ctx?: TCtx,
+) => Promise<Response>;
 
 export interface WithApiContractOptions {
   /** Default success status for the inner handler. Defaults to 200. */
   successStatus?: 200 | 201;
 }
 
-export function withApiContract(
-  handler: Handler,
+export function withApiContract<TCtx = unknown>(
+  handler: Handler<TCtx>,
   _opts: WithApiContractOptions = {},
-): Handler {
-  return async (req: NextRequest): Promise<Response> => {
+): Handler<TCtx> {
+  return async (req: NextRequest, ctx?: TCtx): Promise<Response> => {
     // 1. Content-Type gate.
     const ct = requireJson(req);
     if (ct) return ct;
 
     try {
-      const result = await handler(req);
+      const result = await handler(req, ctx);
       return result;
     } catch (err: unknown) {
       // Per FR-015: log the full error server-side, return a generic

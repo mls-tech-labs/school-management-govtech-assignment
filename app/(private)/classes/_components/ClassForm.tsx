@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { notification } from "antd";
 import { FormField } from "@/components/FormField";
 import { Button } from "@/components/Button";
 import { FormTeacherSelect } from "./FormTeacherSelect";
@@ -8,14 +9,27 @@ import { LevelSelect } from "./LevelSelect";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
 /**
- * The Add Class form expects teachers with `ulid` (per
- * `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
- * — POST/GET reference object shape) so the form can build the
- * nested `formTeacher: { ulid, name }` body that the API expects.
+ * ClassForm — used by both the Add Class flow and the Edit Class flow.
+ * The presence of `initialValues` switches the form into edit mode
+ * (gated by the presence of the `[ulid]` path parameter on the edit
+ * page). In edit mode:
+ *   - The fields are pre-populated from `initialValues`.
+ *   - The submit handler dispatches PUT (not POST).
+ *   - The form captures `modifiedAt` (the row's GET-load
+ *     `modified_at` value) so the PUT 200 `previousModifiedAt` can be
+ *     compared for the concurrent-edit toast (per FR-016).
  */
 export interface ClassFormProps {
   teachers: { ulid: string; name: string }[];
   levels: { ulid: string; name: string; active: boolean }[];
+  initialValues?: {
+    ulid: string;
+    name: string;
+    level: { ulid: string; name: string };
+    formTeacher: { ulid: string; name: string };
+    /** The `modified_at` value the form captured on mount (ISO string). */
+    modifiedAt?: string;
+  };
 }
 
 function mapError(field: string, message: string): string {
@@ -41,19 +55,14 @@ function mapError(field: string, message: string): string {
   return message;
 }
 
-/**
- * Add Class form. The wire shape submitted to
- * `POST /api/v1.0/classes` is the nested `{ ulid, name }` shape
- * per Session 2026-06-20 — both `level` and `formTeacher` are
- * nested objects. The form keeps flat `level` and `formTeacher`
- * display values (the user picks by name in the dropdown) and
- * looks up the corresponding `ulid` at submit time.
- */
-export function ClassForm({ teachers, levels }: ClassFormProps) {
+export function ClassForm({ teachers, levels, initialValues }: ClassFormProps) {
   const router = useRouter();
-  const [level, setLevel] = useState("");
-  const [name, setName] = useState("");
-  const [formTeacher, setFormTeacher] = useState("");
+  const isEdit = Boolean(initialValues);
+  const [level, setLevel] = useState(initialValues?.level.name ?? "");
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [formTeacher, setFormTeacher] = useState(
+    initialValues?.formTeacher.ulid ?? "",
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -80,22 +89,47 @@ export function ClassForm({ teachers, levels }: ClassFormProps) {
         setSubmitting(false);
         return;
       }
-      const res = await fetch("/api/v1.0/classes", {
-        method: "POST",
+      const body = {
+        level: { ulid: selectedLevel.ulid, name: selectedLevel.name },
+        name,
+        formTeacher: {
+          ulid: selectedTeacher.ulid,
+          name: selectedTeacher.name,
+        },
+      };
+      const url = isEdit
+        ? `/api/v1.0/classes/${initialValues!.ulid}`
+        : "/api/v1.0/classes";
+      const method = isEdit ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           "X-CSRF-Token": getCsrfToken() ?? "",
         },
-        body: JSON.stringify({
-          level: { ulid: selectedLevel.ulid, name: selectedLevel.name },
-          name,
-          formTeacher: {
-            ulid: selectedTeacher.ulid,
-            name: selectedTeacher.name,
-          },
-        }),
+        body: JSON.stringify(body),
       });
-      if (res.status === 201) {
+      if (res.status === 200 || res.status === 201) {
+        if (isEdit && initialValues?.modifiedAt) {
+          const data = (await res.json().catch(() => ({}))) as {
+            previousModifiedAt?: string;
+          };
+          if (
+            data.previousModifiedAt &&
+            data.previousModifiedAt !== initialValues.modifiedAt
+          ) {
+            const t = new Date(data.previousModifiedAt);
+            const hh = String(t.getHours()).padStart(2, "0");
+            const mm = String(t.getMinutes()).padStart(2, "0");
+            const ss = String(t.getSeconds()).padStart(2, "0");
+            notification.warning({
+              message: "Concurrent edit detected",
+              description: `Note: this record was edited by another administrator at ${hh}:${mm}:${ss} — your changes are saved, but please verify.`,
+              placement: "topRight",
+              duration: 8,
+            });
+          }
+        }
         router.push("/classes");
         return;
       }
@@ -117,11 +151,26 @@ export function ClassForm({ teachers, levels }: ClassFormProps) {
         else setFormError(data.error ?? "Please review the highlighted fields.");
         setErrors(next);
       } else if (res.status === 404) {
-        setErrors({
-          formTeacher: "Teacher not found.",
-        });
+        if ((data.error ?? "").toLowerCase().includes("teacher")) {
+          setErrors({
+            formTeacher: "Teacher not found.",
+          });
+        } else {
+          setFormError("Class not found. It may have been deleted.");
+        }
       } else if (res.status === 409) {
-        setFormError(data.error ?? "This class conflicts with an existing record.");
+        // PUT path: 409 is duplicate name or form-teacher collision.
+        const m = (data.error ?? "").toLowerCase();
+        if (m.includes("name")) {
+          setErrors({ name: "Class name already in use." });
+        } else if (m.includes("formteacher") || m.includes("assigned") || m.includes("teacher")) {
+          setErrors({
+            formTeacher:
+              "This teacher is already the form teacher of another class.",
+          });
+        } else {
+          setFormError(data.error ?? "This class conflicts with an existing record.");
+        }
       } else {
         setFormError(data.error ?? "Could not save the class. Please try again.");
       }
@@ -169,7 +218,13 @@ export function ClassForm({ teachers, levels }: ClassFormProps) {
           ← Back
         </Button>
         <Button type="submit" variant="primary" disabled={submitDisabled}>
-          {submitting ? "Adding…" : "Add Class"}
+          {submitting
+            ? isEdit
+              ? "Saving…"
+              : "Adding…"
+            : isEdit
+              ? "Save Class"
+              : "Add Class"}
         </Button>
       </div>
     </form>

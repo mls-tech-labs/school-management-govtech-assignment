@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { createClassRequestSchema } from "@/lib/validation/class";
+import {
+  createClassRequestSchema,
+  putClassRequestSchema,
+  deleteClassRequestSchema,
+} from "@/lib/validation/class";
 
 /**
  * Unit tests for the `POST /api/v1.0/classes` Joi request schema.
@@ -124,6 +128,76 @@ describe("createClassRequestSchema", () => {
       name: "Class 1A",
       teacherEmail: "alice@example.com",
     });
+    expect(error).toBeDefined();
+  });
+});
+
+/**
+ * PUT class schema — per FR-008, mirrors the POST shape exactly. The
+ * `ulid` is taken from the path parameter (not the body), and
+ * `additionalProperties: false` blocks ulid-sneaking-via-body and
+ * any other typos.
+ */
+describe("putClassRequestSchema", () => {
+  it("accepts a valid PUT body with nested level + formTeacher", () => {
+    const { error } = putClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
+    });
+    expect(error).toBeUndefined();
+  });
+
+  it("rejects an extra `ulid` top-level field", () => {
+    const { error } = putClassRequestSchema.validate({
+      ulid: "01H000000000000000000000B1",
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
+    });
+    expect(error).toBeDefined();
+  });
+
+  it("rejects a missing level.ulid", () => {
+    const { error } = putClassRequestSchema.validate({
+      level: { name: "Primary 1" },
+      name: "Class 1A",
+      formTeacher: { ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7R" },
+    });
+    expect(error).toBeDefined();
+  });
+
+  it("rejects a missing formTeacher.ulid", () => {
+    const { error } = putClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      formTeacher: { name: "Alice Tan" },
+    });
+    expect(error).toBeDefined();
+  });
+
+  it("rejects the legacy flat teacherEmail field", () => {
+    const { error } = putClassRequestSchema.validate({
+      level: { ulid: "01H000000000000000000000B1" },
+      name: "Class 1A",
+      teacherEmail: "alice@example.com",
+    });
+    expect(error).toBeDefined();
+  });
+});
+
+/**
+ * DELETE class schema — per Principle VII, empty body still runs
+ * validation. The schema rejects any non-empty body.
+ */
+describe("deleteClassRequestSchema", () => {
+  it("accepts an empty body", () => {
+    const { error } = deleteClassRequestSchema.validate({});
+    expect(error).toBeUndefined();
+  });
+
+  it("rejects a non-empty body", () => {
+    const { error } = deleteClassRequestSchema.validate({ foo: "bar" });
     expect(error).toBeDefined();
   });
 });

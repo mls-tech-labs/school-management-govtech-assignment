@@ -2,7 +2,7 @@
 
 A small admin portal for managing **Teachers** and **Classes** in a private school. Stage 1 ships Create + Read for both entities, backed by Next.js 15 (App Router) + MySQL 8 + typeORM + Joi + Ant Design + Tailwind CSS.
 
-> **Project status**: Stage 1 + Stage 2 implemented. See `specs/001-teachers/`, `specs/002-classes/`, `specs/003-backend-api-db/`, `specs/004-user-auth/`, and `specs/005-security-hardening/` for the source-of-truth specs.
+> **Project status**: Stage 1 + Stage 2 + Stage 3 implemented. See `specs/001-teachers/`, `specs/002-classes/`, `specs/003-backend-api-db/`, `specs/004-user-auth/`, `specs/005-security-hardening/`, and `specs/006-teachers-classes-mutations/` for the source-of-truth specs.
 
 ---
 
@@ -164,17 +164,23 @@ pipelines, per spec FR-026).
 ```text
 app/
 ├── api/v1.0/
-│   ├── teachers/route.ts        POST + GET /api/v1.0/teachers  (authed)
-│   ├── subjects/route.ts        GET     /api/v1.0/subjects     (authed)
-│   ├── classes/route.ts         POST + GET /api/v1.0/classes   (authed)
-│   ├── levels/route.ts          GET     /api/v1.0/levels       (authed)
-│   ├── login/route.ts           POST    /api/v1.0/login        (public)
-│   ├── logout/route.ts          POST    /api/v1.0/logout       (public)
-│   └── me/route.ts              GET     /api/v1.0/me           (public)
+│   ├── teachers/
+│   │   ├── route.ts             POST + GET /api/v1.0/teachers           (authed)
+│   │   └── [ulid]/route.ts      GET / PUT / DELETE /api/v1.0/teachers/[ulid]  (authed, Stage 3)
+│   ├── subjects/route.ts        GET     /api/v1.0/subjects              (authed)
+│   ├── classes/
+│   │   ├── route.ts             POST + GET /api/v1.0/classes            (authed)
+│   │   └── [ulid]/route.ts      GET / PUT / DELETE /api/v1.0/classes/[ulid]  (authed, Stage 3)
+│   ├── levels/route.ts          GET     /api/v1.0/levels                (authed)
+│   ├── login/route.ts           POST    /api/v1.0/login                 (public)
+│   ├── logout/route.ts          POST    /api/v1.0/logout                (public)
+│   └── me/route.ts              GET     /api/v1.0/me                    (public)
 ├── (private)/                   route group — every page is wrapped in <RouteGuard>
 │   ├── layout.tsx               the guard wrapper
-│   ├── teachers/                /teachers + /teachers/add
-│   └── classes/                 /classes + /classes/add
+│   ├── teachers/                /teachers + /teachers/add + /teachers/[ulid]/edit (Stage 3)
+│   │   └── _components/         TeacherTable + TeacherForm + RowActionsMenu (shared with classes)
+│   └── classes/                 /classes + /classes/add + /classes/[ulid]/edit (Stage 3)
+│       └── _components/         ClassTable + ClassForm
 ├── login/page.tsx               the login page (3 elements per FR-002)
 ├── layout.tsx, page.tsx, globals.css
 components/                      Shared UI primitives (FormField, Button, Select, StateViews, SiteHeader)
@@ -186,9 +192,11 @@ lib/
 │                                log.ts + index.ts (barrel)
 ├── db/                          entities (Teacher, Subject, Class, Level, User),
 │                                repositories, redis.ts (Redis singleton), data-source.ts
+├── hooks/
+│   └── use-edit-submit.ts       PUT 200 → previousModifiedAt compare → concurrent-edit toast (Stage 3)
 ├── ulid.ts                      generateUlid() — cross-cutting row-handle generator (FR-021)
 ├── config.ts                    runtime config (Joi-validated, fail-closed on missing keys)
-└── validation/                  Joi schemas (teacher.ts, class.ts)
+└── validation/                  Joi schemas (teacher.ts, class.ts, contact-number.ts)
 scripts/
 └── seed-admin.ts                hash + emit INSERT INTO users (FR-026)
 middleware.ts                    Next.js middleware — CORS preflight + CSRF double-submit
@@ -221,9 +229,15 @@ Every entity carries the cross-cutting `ulid` row handle (per FR-021) — a 26-c
 | GET  | `/api/v1.0/me`       | — | session | exempt | `200` + `{ username, active, ulid, createdAt }` | 401, 500, 503 |
 | POST | `/api/v1.0/teachers` | `{ name, subject: { ulid, name }, email, contactNumber }` | session | required | `201` + `Teacher` JSON | 400, 401, 403, 409, 415, 500, 503 |
 | GET  | `/api/v1.0/teachers` | — | session | n/a | `200` + `{ data: Teacher[] }` | 401, 403, 415, 500, 503 |
+| **GET**  | **`/api/v1.0/teachers/[ulid]`** | — | session | n/a | `200` + `Teacher` JSON | 400, 401, 404, 415, 500, 503 |
+| **PUT**  | **`/api/v1.0/teachers/[ulid]`** | `{ name, subject: { ulid, name }, email, contactNumber }` | session | required | `200` + `Teacher` JSON + `previousModifiedAt` | 400, 401, 403, 404, 409, 415, 500, 503 |
+| **DELETE** | **`/api/v1.0/teachers/[ulid]`** | — | session | required | `200` + `{ ulid: <deleted-teacher-ulid> }` | 400, 401, 403, 404, 409, 415, 500, 503 |
 | GET  | `/api/v1.0/subjects` | — | session | n/a | `200` + `{ data: Subject[] }` | 401, 403, 415, 500, 503 |
 | POST | `/api/v1.0/classes`  | `{ level: { ulid, name }, name, formTeacher: { ulid, name } }` | session | required | `201` + `Class` JSON | 400, 401, 403, 404, 409, 415, 500, 503 |
 | GET  | `/api/v1.0/classes`  | — | session | n/a | `200` + `{ data: Class[] }` | 401, 403, 415, 500, 503 |
+| **GET**  | **`/api/v1.0/classes/[ulid]`** | — | session | n/a | `200` + `Class` JSON | 400, 401, 404, 415, 500, 503 |
+| **PUT**  | **`/api/v1.0/classes/[ulid]`** | `{ level: { ulid, name }, name, formTeacher: { ulid, name } }` | session | required | `200` + `Class` JSON + `previousModifiedAt` | 400, 401, 403, 404, 409, 415, 500, 503 |
+| **DELETE** | **`/api/v1.0/classes/[ulid]`** | — | session | required | `200` + `{ ulid: <deleted-class-ulid> }` | 400, 401, 403, 404, 415, 500, 503 |
 | GET  | `/api/v1.0/levels`   | — | session | n/a | `200` + `{ data: Level[] }` | 401, 403, 415, 500, 503 |
 
 ### Authentication — `specs/004-user-auth/contracts/auth.yaml`
@@ -311,6 +325,30 @@ Success `201`: `Teacher` JSON (as above). The `ulid` is generated server-side.
 
 Errors: `400` (Joi — `{"error":"name is required"}`, `{"error":"email must be a valid email"}`; unknown `subject.ulid` → `{"error":"Invalid subject"}`), `401`, `403` (`{"error":"cors"}` / `{"error":"csrf"}`), `409` (`{"error":"Email already in use"}`), `415`, `500`, `503`.
 
+#### `GET /api/v1.0/teachers/[ulid]`  *(Stage 3 v2.6.0 — `specs/006-teachers-classes-mutations/contracts/teachers.yaml`)*
+
+Auth: session. CSRF: n/a. The data source for the Edit Teacher RSC page (`/teachers/[ulid]/edit`); the per-row `...` menu's **Edit** item links here.
+
+Success `200`: `Teacher` JSON (same shape as a single `GET /api/v1.0/teachers` entry).
+
+Errors: `400` (`{"error":"Invalid ulid path parameter"}`), `401`, `404` (`{"error":"Teacher not found"}`), `415`, `500`, `503`.
+
+#### `PUT /api/v1.0/teachers/[ulid]`  *(Stage 3 v2.5.0 — `specs/006-teachers-classes-mutations/contracts/teachers.yaml`)*
+
+Auth: session. CSRF: required. Full-resource UPDATE — every mutable field is required. Re-runs every POST-side invariant: subject-active, email-unique with the row-exclusion self-match rule (the same email the row already has is permitted; a collision with a DIFFERENT teacher is rejected), and the Singapore `^[89]\d{7}$` contact-number rule (FR-013 — re-tightened from the relaxed Stage 1 / Stage 2 `^\d{8}$` pattern in `specs/006-teachers-classes-mutations/spec.md` Session 2026-06-22).
+
+Success `200`: the updated `Teacher` JSON with a sibling `previousModifiedAt` field whose value is the row's pre-update `modified_at` ISO-8601 timestamp. The client-side `use-edit-submit` hook compares this to the form-load `modifiedAt`; on a difference it fires the non-blocking antd warning toast `Note: this record was edited by another administrator at HH:MM:SS — your changes are saved, but please verify.` (auto-dismiss after 8 s).
+
+Errors: `400` (Joi — same as POST; Singapore contact-number rejection → `{"error":"Contact number must start with 8 or 9 and be 8 digits."}`; unknown `subject.ulid` → `{"error":"Invalid subject"}`), `401`, `403` (`{"error":"cors"}` / `{"error":"csrf"}`), `404` (`{"error":"Teacher not found"}`), `409` (`{"error":"Email already in use"}`), `415`, `500`, `503`.
+
+#### `DELETE /api/v1.0/teachers/[ulid]`  *(Stage 3 v2.5.0 — `specs/006-teachers-classes-mutations/contracts/teachers.yaml`)*
+
+Auth: session. CSRF: required. Hard delete with the **form-teacher referential integrity guard** (FR-009). On success returns `200` + `{ "ulid": "<deleted-teacher-ulid>" }`. A second DELETE on the same `ulid` (idempotent per Principle X.2) returns `404` silently. The wire envelope on the 409 path uses the singular `details.classUlid` / `details.className` extension (per the one-to-one simplification — `UNIQUE INDEX uq_classes_form_teacher_id` guarantees at most one blocking class; no array, no `… and N more` suffix).
+
+Success `200`: `{ "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T" }`.
+
+Errors: `400`, `401`, `403`, `404` (idempotent second DELETE — `{"error":"Teacher not found"}`), `409` (`{"error":"Teacher is assigned as form teacher of class \"<className>\". Reassign or delete that class first.", "details": { "classUlid": "<ulid>", "className": "<name>" }}`), `415`, `500`, `503`.
+
 #### `GET /api/v1.0/teachers`
 
 Auth: session. CSRF: n/a.
@@ -371,6 +409,30 @@ Success `201`: `Class` JSON (as above). The `ulid` is generated server-side.
 
 Errors: `400` (Joi; unknown `level.ulid` → `{"error":"Invalid level"}`), `401`, `403` (`{"error":"cors"}` / `{"error":"csrf"}`), `404` (`{"error":"Teacher not found"}`), `409` (`{"error":"Class name already in use"}` / `{"error":"Teacher already assigned"}`), `415`, `500`, `503`.
 
+#### `GET /api/v1.0/classes/[ulid]`  *(Stage 3 v2.6.0 — `specs/006-teachers-classes-mutations/contracts/classes.yaml`)*
+
+Auth: session. CSRF: n/a. The data source for the Edit Class RSC page (`/classes/[ulid]/edit`); the per-row `...` menu's **Edit** item links here.
+
+Success `200`: `Class` JSON (same shape as a single `GET /api/v1.0/classes` entry).
+
+Errors: `400` (`{"error":"Invalid ulid path parameter"}`), `401`, `404` (`{"error":"Class not found"}`), `415`, `500`, `503`.
+
+#### `PUT /api/v1.0/classes/[ulid]`  *(Stage 3 v2.5.0 — `specs/006-teachers-classes-mutations/contracts/classes.yaml`)*
+
+Auth: session. CSRF: required. Full-resource UPDATE — every mutable field is required. Re-runs every POST-side invariant: level-active, form-teacher-existence (404 on unknown `formTeacher.ulid`), form-teacher-uniqueness against a DIFFERENT class (the same form teacher the class already has is permitted; a collision with a DIFFERENT class is rejected), and class-name uniqueness with the same self-match rule.
+
+Success `200`: the updated `Class` JSON with a sibling `previousModifiedAt` field (same concurrent-edit toast semantics as PUT-Teacher).
+
+Errors: `400` (Joi; unknown `level.ulid` → `{"error":"Invalid level"}`), `401`, `403`, `404` (`{"error":"Class not found"}` / `{"error":"Teacher not found"}`), `409` (`{"error":"Class name already in use"}` / `{"error":"Teacher already assigned"}`), `415`, `500`, `503`.
+
+#### `DELETE /api/v1.0/classes/[ulid]`  *(Stage 3 v2.5.0 — `specs/006-teachers-classes-mutations/contracts/classes.yaml`)*
+
+Auth: session. CSRF: required. Hard delete with **no referential-integrity check** (per FR-010 / Principle X.2 — no other table references `classes.id` outside the audit columns). On success returns `200` + `{ "ulid": "<deleted-class-ulid>" }`. A second DELETE on the same `ulid` returns `404` silently (Principle X.2). After a successful delete, the teacher who was the deleted class's form teacher is eligible to be the form teacher of a new class (the form-teacher uniqueness invariant is freed by the class delete).
+
+Success `200`: `{ "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T" }`.
+
+Errors: `400`, `401`, `403`, `404` (idempotent second DELETE — `{"error":"Class not found"}`), `415`, `500`, `503`. No `409` path.
+
 #### `GET /api/v1.0/classes`
 
 Auth: session. CSRF: n/a.
@@ -404,14 +466,41 @@ Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
 
 | Code | When |
 |---|---|
-| 400 | Joi validation failure; `{"error":"Invalid subject"}` / `{"error":"Invalid level"}` for unknown reference (server-side lookup is `ulid`-only) |
+| 200 | `PUT /api/v1.0/{teachers,classes}/[ulid]` happy path (Stage 3 — the response body MAY carry the additive `previousModifiedAt` sibling field) |
+| 400 | Joi validation failure; `{"error":"Invalid subject"}` / `{"error":"Invalid level"}` for unknown reference (server-side lookup is `ulid`-only); `{"error":"Invalid ulid path parameter"}` on the Stage 3 single-resource endpoints when the path `[ulid]` fails the Crockford Base32 / length-26 check |
 | 401 | No / unknown / expired session on a protected endpoint. `{"error":"Unauthorized"}` on `GET /api/v1.0/me`; `{"error":"Invalid username or password"}` on `POST /api/v1.0/login` (covers unknown username, wrong password, and inactive user — same body to prevent enumeration) |
 | 403 | CORS allow-list rejected the origin (`{"error":"cors"}`); CSRF double-submit mismatch (`{"error":"csrf"}`) |
-| 404 | `{"error":"Teacher not found"}` — only on `POST /api/v1.0/classes` when `formTeacher.ulid` does not match any teacher |
-| 409 | Duplicate teacher email (`{"error":"Email already in use"}`); duplicate class name (`{"error":"Class name already in use"}`); teacher already assigned (`{"error":"Teacher already assigned"}`) |
+| 404 | `{"error":"Teacher not found"}` — on `POST /api/v1.0/classes` when `formTeacher.ulid` does not match any teacher; on `GET / PUT / DELETE /api/v1.0/teachers/[ulid]` for an unknown `ulid` (Stage 3 — the consumer treats 404 on DELETE as informational per Principle X.2, idempotent second call) |
+| 409 | Duplicate teacher email (`{"error":"Email already in use"}`); duplicate class name (`{"error":"Class name already in use"}`); teacher already assigned (`{"error":"Teacher already assigned"}`); Stage 3 DELETE-Teacher form-teacher guard (`{"error":"Teacher is assigned as form teacher of class \"<className>\". Reassign or delete that class first.", "details": { "classUlid": "<ulid>", "className": "<name>" }}`) |
 | 415 | `{"error":"Content-Type must be application/json"}` |
 | 500 | Unhandled server error — `{"error":"Internal server error"}` (stack trace logged but never sent to the client) |
 | 503 | MySQL or Redis briefly unavailable — `{"error":"Service temporarily unavailable, please retry"}` |
+
+---
+
+## Stage 3 mutations (per `specs/006-teachers-classes-mutations`)
+
+The Stage 3 surface ships **Update + Delete on Teachers and Classes** plus **two new single-resource GETs** that feed the Edit RSC pages. Six new endpoints, all behind the same `withAuth` + `withApiContract` boundary:
+
+| Endpoint | FR | Behaviour summary |
+|---|---|---|
+| `GET /api/v1.0/teachers/[ulid]` | FR-002 | Data source for the Edit Teacher page (`/teachers/[ulid]/edit`). 404 → antd warning + redirect to `/teachers`. |
+| `PUT /api/v1.0/teachers/[ulid]` | FR-007 | Full-resource UPDATE. Re-runs POST-side invariants (subject-active, email-unique with self-match, Singapore `^[89]\d{7}$` contact-number rule). 200 carries the additive `previousModifiedAt` sibling field; the form fires the concurrent-edit toast when it differs from the form-load `modifiedAt`. |
+| `DELETE /api/v1.0/teachers/[ulid]` | FR-009 | Hard delete with form-teacher referential integrity guard. 200 + `{ ulid }`; 404 silently on idempotent second call; 409 with the singular `details.classUlid` / `details.className` envelope when the teacher is the form teacher of a class. |
+| `GET /api/v1.0/classes/[ulid]` | FR-003 | Data source for the Edit Class page (`/classes/[ulid]/edit`). |
+| `PUT /api/v1.0/classes/[ulid]` | FR-008 | Full-resource UPDATE. Re-runs POST-side invariants (level-active, form-teacher-existence, form-teacher-uniqueness against a DIFFERENT class with self-match, class-name uniqueness with self-match). 200 carries `previousModifiedAt`. |
+| `DELETE /api/v1.0/classes/[ulid]` | FR-010 | Hard delete; no referential-integrity check. 200 + `{ ulid }`; 404 silently on idempotent second call. |
+
+### UI changes
+
+- **Per-row `...` menu** — every row in the Teachers and Classes tables now has a rightmost **Actions** column with a `...` button (`aria-label="Row actions"`). The dropdown has two items: **Edit** and **Delete**. The component is shared (`app/(private)/{teachers,classes}/_components/RowActionsMenu.tsx`) and parameterised by `resource: 'teacher' | 'class'` + `{ ulid, name }` + an `onDeleted` callback for client-side list refresh.
+- **Edit Teacher / Edit Class pages** — at `/teachers/[ulid]/edit` and `/classes/[ulid]/edit`. The RSC shell fetches `GET /api/v1.0/{teachers,classes}/[ulid]`; on 404 it shows the antd warning `Teacher not found` / `Class not found` and redirects. On 200 it pre-populates the existing `TeacherForm` / `ClassForm` with `initialValues` and captures the form-load `modifiedAt` for the concurrent-edit toast.
+- **Delete confirmation modal** — antd `Modal.confirm` with the project's Tailwind destructive-action token (`okButtonProps.danger = true`). The modal body embeds the entity's name (`Delete teacher {name}? This action cannot be undone.`).
+- **Concurrent-edit toast** — shared hook `lib/hooks/use-edit-submit.ts` compares the form-load `modifiedAt` to the PUT 200 `previousModifiedAt`; on a difference it fires the antd warning `Note: this record was edited by another administrator at HH:MM:SS — your changes are saved, but please verify.` (auto-dismiss after 8 s).
+
+### Validation rule changes (FR-013)
+
+The Singapore contact-number rule is **re-tightened** to `^[89]\d{7}$` on both POST and PUT paths. The relaxed `^\d{8}$` pattern from the Stage 1 / Stage 2 window is gone. Leading digits `0`–`7` and 10+ are rejected with the field-level error `Contact number must start with 8 or 9 and be 8 digits.`. This rule is enforced by the shared `lib/validation/contact-number.ts` module (used by both `lib/validation/teacher.ts` and any future consumer) — the wire field `contactNumber` is validated against the canonical regex on every write.
 
 ---
 
@@ -432,8 +521,7 @@ Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
 
 - **No pagination**: ≤ 500 teachers / classes per stage. Full list returned.
 - **Read-only reference lists**: `subjects` (9) and `levels` (10) are seeded once by the user's SQL against the user-prepared MySQL container; admin authoring is a future-stage feature.
-- **No edit / delete**: Create + Read only.
-- **Phone format**: exactly 8 digits, digits-only, **no leading-digit restriction** (per FR-004, Session 2026-06-21 — the previous Singapore-mobile `^[89]\d{7}$` pattern was removed). Display format on the table is `XXXX XXXX`.
+- **Phone format (Stage 1)**: exactly 8 digits, digits-only. *(Superseded by Stage 3 — see "Validation rule changes (FR-013)" above.)* Display format on the table is `XXXX XXXX`.
 - **Form Teacher control**: searchable combobox over the existing teachers list.
 
 ---
@@ -443,7 +531,7 @@ Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
 - `name` (Teacher): 1..255 chars, required.
 - `subject` (Teacher): must match an active entry in `subjects`.
 - `email` (Teacher): syntactically valid; **unique across teachers**.
-- `contactNumber` (Teacher): exactly 8 digits, digits-only, with 8 or 9 leading-digit restriction.
+- `contactNumber` (Teacher): exactly 8 digits, digits-only, **must start with 8 or 9** (Singapore `^[89]\d{7}$` — restored in Stage 3 FR-013, re-tightened from the Stage 1 / Stage 2 `^\d{8}$` relaxed pattern).
 - `level` (Class): must match an active entry in `levels`.
 - `name` (Class): 1..255 chars; **globally unique**.
 - `teacherEmail` (Class): must reference an existing teacher; **unique across classes** (one form teacher per teacher).

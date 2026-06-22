@@ -14,11 +14,36 @@ describe("errorEnvelope / response helpers", () => {
     expect(errorEnvelope("oops")).toEqual({ error: "oops" });
   });
 
+  it("errorEnvelope with details returns { error, details } (Stage 3 006 FR-015 envelope extension)", () => {
+    expect(errorEnvelope("Teacher is form teacher", { classUlid: "01H0", className: "1A" })).toEqual({
+      error: "Teacher is form teacher",
+      details: { classUlid: "01H0", className: "1A" },
+    });
+  });
+
+  it("errorEnvelope with empty details object still emits the `details` key (additive contract)", () => {
+    const env = errorEnvelope("msg", {});
+    expect(env).toHaveProperty("details");
+    expect(env.details).toEqual({});
+  });
+
   it("jsonError produces a 400 JSON envelope", async () => {
     const res = jsonError(400, "bad");
     expect(res.status).toBe(400);
     expect(res.headers.get("Content-Type")).toBe("application/json");
     expect(await res.json()).toEqual({ error: "bad" });
+  });
+
+  it("jsonError with details surfaces the details object in the response body", async () => {
+    const res = jsonError(409, "Teacher is form teacher", {
+      classUlid: "01H0",
+      className: "1A",
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: "Teacher is form teacher",
+      details: { classUlid: "01H0", className: "1A" },
+    });
   });
 
   it("jsonOk produces a 200 JSON body", async () => {

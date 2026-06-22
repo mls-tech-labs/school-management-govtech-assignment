@@ -48,6 +48,44 @@ export type CreateClassRequest = {
 };
 
 /**
+ * Joi schema for `PUT /api/v1.0/classes/[ulid]` request body.
+ *
+ * Per `006-teachers-classes-mutations/spec.md` FR-008: full-resource
+ * replacement; every mutable field is required. The shape mirrors
+ * `createClassRequestSchema` exactly.
+ *
+ * Row-exclusion self-match semantics on `name` and `formTeacher.ulid`
+ * are enforced application-side by the PUT handler (it queries
+ * `WHERE name = ? AND id != <class.id>` and
+ * `WHERE form_teacher_id = ? AND id != <class.id>`); the Joi schema
+ * just validates the shape — collision vs. a different row is a 409,
+ * the same value as the row itself is a no-op 200.
+ */
+export const putClassRequestSchema = createClassRequestSchema;
+
+/**
+ * Joi schema for `DELETE /api/v1.0/classes/[ulid]` request body.
+ *
+ * Per Principle VII: Joi MUST validate every payload that crosses a
+ * trust boundary; the empty body is the boundary. The schema is an
+ * empty-body schema that still runs the validation step and rejects
+ * any non-empty body with a schema-level error (per
+ * `006-teachers-classes-mutations/data-model.md` §3).
+ */
+export const deleteClassRequestSchema = Joi.object({}).min(0).max(0);
+
+/**
+ * Joi schema for the `[ulid]` path parameter on every Stage 3
+ * single-resource endpoint (GET / PUT / DELETE). 26-character Crockford
+ * Base32, matching the cross-cutting ULID rule from
+ * `003-backend-api-db/spec.md` FR-021.
+ */
+export const ulidPathParamSchema = Joi.string()
+  .length(26)
+  .pattern(/^[0-9A-HJKMNP-TV-Z]{26}$/)
+  .required();
+
+/**
  * Backwards-compatible alias — the previous build returned a Promise
  * (it pre-loaded the active level names list before building the Joi
  * schema). With the new wire shape the lookup is by `ulid` (not by

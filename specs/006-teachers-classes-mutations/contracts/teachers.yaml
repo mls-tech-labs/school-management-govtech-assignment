@@ -1,0 +1,610 @@
+openapi: 3.1.0
+info:
+  title: Teachers API — Stage 3 mutations (006)
+  version: 0.3.0
+  description: |
+    Stage 3 mutation contract for the Teachers feature, owned by
+    `specs/006-teachers-classes-mutations/spec.md`. Extends the
+    Stage 1 `001-teachers/contracts/teachers.yaml` contract with
+    three new endpoints:
+
+      - `GET /api/v1.0/teachers/{ulid}` — single-resource read
+        (introduced by the constitution v2.6.0 amendment; data
+        source for the Stage 3 Edit Teacher page).
+      - `PUT /api/v1.0/teachers/{ulid}` — full-resource UPDATE
+        on a Teacher; re-runs subject-active, email-unique
+        (with row-exclusion self-match), and the restored
+        Singapore `^[89]\d{7}$` contact-number rule; returns
+        `200 OK` with the updated row plus a `previousModifiedAt`
+        sibling field for the client-side concurrent-edit toast.
+      - `DELETE /api/v1.0/teachers/{ulid}` — hard delete;
+        rejected with `409 Conflict` and the singular
+        `details.classUlid` / `details.className` envelope when
+        the teacher is currently a form teacher of a class (per
+        Principle X.1); second DELETE returns `404 Not Found`
+        (idempotent per Principle X.2).
+
+    Cross-cutting contract details (status-code table, error
+    envelope, 415 / 503 behaviour, version prefix
+    `/api/v1.0/`) are defined in
+    `003-backend-api-db/spec.md` (FR-013, FR-022) and are
+    inherited by reference. Authentication is via the
+    `withAuth` middleware from `004-user-auth`; CSRF is via
+    the double-submit-cookie middleware from
+    `005-security-hardening` (GET is exempt per Principle
+    IX.3).
+
+    Stage 1 deliberately does NOT expose the `id` column (the
+    surrogate primary key is reserved for the mutation layer's
+    internal use; it lives in the DB but is not returned to
+    the client). The `previousModifiedAt` field is the
+    application-layer extension to the standard `Teacher`
+    response shape (it is not a persistence-layer column).
+
+servers:
+  - url: http://localhost:3000
+    description: Local dev (docker compose up)
+
+tags:
+  - name: teachers
+    description: Teacher registration, lookup, and Stage 3 mutations
+
+paths:
+  /api/v1.0/teachers/{ulid}:
+    parameters:
+      - in: path
+        name: ulid
+        required: true
+        schema:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+        description: |
+          26-character Crockford Base32 ULID. The
+          frontend-stable row handle (per FR-021, owned by
+          `003-backend-api-db`).
+
+    get:
+      tags: [teachers]
+      summary: Get a single teacher by ulid (Stage 3, v2.6.0)
+      description: |
+        Returns the teacher record in the same shape as a
+        single entry in `GET /api/v1.0/teachers` (per
+        `001-teachers/spec.md` FR-007 — `ulid`, `name`,
+        `subject` as nested `{ ulid, name }`, `email`,
+        `contactNumber`) with HTTP `200 OK` on success, or
+        `404 Not Found` with `{ "error": "Teacher not found" }`
+        on an unknown `ulid`. The endpoint is authenticated
+        (Principle IV — returns `401` without a valid session
+        cookie, inherited from `003-backend-api-db/spec.md`
+        FR-013) and CSRF-exempt (GET is exempt per Principle
+        IX.3). The endpoint is the data source for the Stage
+        3 Edit Teacher page (`/teachers/[ulid]/edit`, owned
+        by 006 spec FR-002).
+      operationId: getTeacher
+      responses:
+        "200":
+          description: Teacher found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Teacher"
+              example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
+                name: "Alice Tan"
+                subject:
+                  ulid: "01H000000000000000000000A1"
+                  name: "Mathematics"
+                email: "alice@example.com"
+                contactNumber: "91234567"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: |
+            The `ulid` does not match any registered teacher.
+            Per `003-backend-api-db/spec.md` FR-013 (the
+            Stage 3 amendment adds the `404 Not Found` row to
+            the cross-cutting status-code table).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { "error": "Teacher not found" }
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    put:
+      tags: [teachers]
+      summary: Update an existing teacher (Stage 3, full-resource)
+      description: |
+        Full-resource `PUT` — every mutable field
+        (`name`, `subject` as nested `{ ulid, name }`,
+        `email`, `contactNumber`) is submitted together; the
+        `ulid` is taken from the path parameter, not the
+        body, and is immutable. The route re-runs every
+        POST-side invariant (per Principle X.3):
+        subject-active (FR-005a, 001-teachers), email-unique
+        (FR-005, 001-teachers, with the row-exclusion
+        self-match rule — submitting the teacher's current
+        email as the new email is a valid no-op that returns
+        `200 OK`), and the restored Singapore `^[89]\d{7}$`
+        contact-number rule (006 spec FR-013). On success,
+        the `200 OK` response body additionally includes the
+        row's **pre-update** `modified_at` value as a sibling
+        field named `previousModifiedAt` — this enables the
+        client-side concurrent-edit toast described in
+        006 spec FR-016. On failure, the route returns the
+        same JSON error envelope (`{ "error": "..." }`) and
+        HTTP status code as the equivalent POST failure
+        (`400` / `404` / `409`).
+      operationId: updateTeacher
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutTeacherRequest"
+            examples:
+              valid:
+                value:
+                  name: "Alice Tan"
+                  subject:
+                    ulid: "01H000000000000000000000A1"
+                    name: "Mathematics"
+                  email: "alice@example.com"
+                  contactNumber: "91234567"
+      responses:
+        "200":
+          description: Teacher updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PutTeacherResponse"
+              example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
+                name: "Alice Tan"
+                subject:
+                  ulid: "01H000000000000000000000A1"
+                  name: "Mathematics"
+                email: "alice@example.com"
+                contactNumber: "91234567"
+                previousModifiedAt: "2026-06-22T10:15:30.000Z"
+        "400":
+          description: |
+            Validation error (bad email, bad contact number
+            that does not start with `8` or `9`, missing
+            field, unknown/inactive subject). Per
+            `003-backend-api-db/spec.md` FR-013.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidEmail:
+                  value: { "error": "email must be a valid email" }
+                invalidContact:
+                  value: { "error": "Contact number must start with 8 or 9 and be 8 digits." }
+                unknownSubject:
+                  value: { "error": "subject must be one of [English, Mathematics, Science, ...]" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenCsrf"
+        "404":
+          description: |
+            The `ulid` does not match any registered teacher.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { "error": "Teacher not found" }
+        "409":
+          description: |
+            Duplicate email (the new `email` collides with
+            another teacher's email — `UNIQUE(teachers.email)`
+            violation; the row-exclusion self-match rule
+            allows a no-op update on the current email).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                duplicate:
+                  value: { "error": "Email already in use" }
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+    delete:
+      tags: [teachers]
+      summary: Delete a teacher (Stage 3, idempotent)
+      description: |
+        Hard delete. The route first checks whether the
+        teacher is currently assigned as the form teacher
+        of any class (a single indexed query against
+        `uq_classes_form_teacher_id` — `O(log n)`, returns
+        0 or 1 rows). If the teacher is a current form
+        teacher, the route rejects with `409 Conflict` and
+        the singular envelope per 006 spec FR-009:
+        ```
+        {
+          "error": "Teacher is assigned as form teacher of class \"<className>\". Reassign or delete that class first.",
+          "details": {
+            "classUlid": "<classUlid>",
+            "className": "<className>"
+          }
+        }
+        ```
+        The `error` field embeds the class name in double
+        quotes; the `details` extension is additive (existing
+        clients that only read the `error` field are
+        unaffected) and forward-compatible (future endpoints
+        MAY add a `details` block). The `details.classUlid`
+        is preserved for programmatic consumers that want to
+        deep-link the admin to `/classes/[ulid]/edit`.
+
+        On success (teacher not a current form teacher),
+        the route deletes the row and returns `200 OK` with
+        `{ "ulid": "<deleted-teacher-ulid>" }`. A second
+        DELETE on the same `ulid` returns `404 Not Found`
+        with `{ "error": "Teacher not found" }` (idempotent
+        per Principle X.2).
+      operationId: deleteTeacher
+      responses:
+        "200":
+          description: Teacher deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteResourceResponse"
+              example:
+                ulid: "01HZX8K2D5Y3J8QF8W9B3N5P7T"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ForbiddenCsrf"
+        "404":
+          description: |
+            The `ulid` does not match any registered teacher
+            (covers the second DELETE on the same `ulid`,
+            per Principle X.2 idempotency, and the unknown
+            `ulid` case).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                notFound:
+                  value: { "error": "Teacher not found" }
+        "409":
+          description: |
+            The teacher is currently the form teacher of a
+            class (per `UNIQUE INDEX uq_classes_form_teacher_id`,
+            at most one class). The singular envelope is
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorWithClassDetails"
+              example:
+                error: 'Teacher is assigned as form teacher of class "Class 1A". Reassign or delete that class first.'
+                details:
+                  classUlid: "01HZX8K2D5Y3J8QF8W9B3N5PA0"
+                  className: "Class 1A"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  schemas:
+    Teacher:
+      type: object
+      description: |
+        The Stage 1 + Stage 3 wire shape of a teacher. `ulid`
+        is the frontend-stable row handle (per FR-021, owned
+        by `003-backend-api-db`); `email` is the natural
+        identifier. Reference fields are nested
+        `{ ulid, name }` objects per
+        `003-backend-api-db/spec.md` Clarifications, Session
+        2026-06-20 (POST/GET reference object shape). The
+        `id` column is intentionally not exposed (per
+        `003-backend-api-db/spec.md` FR-019 + FR-020).
+      required: [ulid, name, subject, email, contactNumber]
+      properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            26-character Crockford Base32 ULID. Server-generated
+            by the `ulid` npm package. The frontend-stable row
+            handle (per FR-021).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced subject (the server-side
+                lookup key — matched against
+                `uq_subjects_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Display name of the referenced subject (e.g.,
+                "Mathematics"). Echoes the authoritative `name`
+                from the `subjects` row; on POST / PUT it is a
+                display hint and is NOT validated against the
+                row identified by `ulid`.
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+          example: "91234567"
+          description: |
+            Exactly 8 digits, must start with `8` or `9` (the
+            Singapore-context pattern restored in 006 spec
+            Clarifications Session 2026-06-22 contact-number
+            rule restoration; supersedes the relaxed
+            `^\d{8}$` pattern from 001-teachers Clarifications
+            Session 2026-06-21).
+
+    PutTeacherRequest:
+      type: object
+      description: |
+        Full-resource `PUT` body for a Teacher. Every mutable
+        field is required; the `ulid` is taken from the path
+        parameter, not the body, and is immutable.
+      required: [name, subject, email, contactNumber]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: object
+          required: [ulid]
+          additionalProperties: false
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                ULID of the referenced subject. Must match an
+                active entry in the `subjects` reference list
+                (looked up via `uq_subjects_ulid`).
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: |
+                Optional display name of the referenced
+                subject. Ignored server-side — the lookup is
+                `ulid`-only.
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+          description: |
+            Exactly 8 digits, must start with `8` or `9`. The
+            error message on rejection is `Contact number must
+            start with 8 or 9 and be 8 digits.`
+
+    PutTeacherResponse:
+      type: object
+      description: |
+        The Stage 3 200 response body for `PUT /api/v1.0/teachers/{ulid}`.
+        Same as the standard `Teacher` shape with one additional
+        sibling field `previousModifiedAt` (per 006 spec FR-007)
+        carrying the row's pre-update `modified_at` value as an
+        ISO-8601 timestamp. The client-side `use-edit-submit` hook
+        captures the form-load `modifiedAt` and compares it to this
+        field — if they differ, the concurrent-edit toast fires (per
+        006 spec FR-016).
+      required: [ulid, name, subject, email, contactNumber, previousModifiedAt]
+      properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        subject:
+          type: object
+          required: [ulid, name]
+          properties:
+            ulid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+            name:
+              type: string
+              minLength: 1
+              maxLength: 64
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        contactNumber:
+          type: string
+          pattern: "^[89]\\d{7}$"
+        previousModifiedAt:
+          type: string
+          format: date-time
+          description: |
+            The row's pre-update `modified_at` value (the value
+            immediately before the just-completed PUT write),
+            formatted as an ISO-8601 timestamp. The
+            `use-edit-submit` hook captures the form-load
+            `modifiedAt` and compares it to this field — if they
+            differ, the concurrent-edit toast fires.
+
+    DeleteResourceResponse:
+      type: object
+      description: |
+        The 200 response body for a successful DELETE on a Teacher
+        or Class. The envelope echoes the deleted row's `ulid` for
+        client confirmation. NOT `204 No Content` — the envelope
+        is uniform with the rest of the API (per
+        `TODO(STAGE3_DELETE_RESPONSE_SHAPE)` in the constitution
+        Sync Impact Report).
+      required: [ulid]
+      properties:
+        ulid:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+          description: |
+            The `ulid` of the deleted row.
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: |
+            Human-readable error message. The `error` field stays
+            canonical and human-readable; the optional `details`
+            extension is a machine-readable extension that
+            downstream consumers (UI notifications, automated
+            tests, deep-links to `/classes/[ulid]/edit`) can use
+            without parsing the error string. Per
+            `003-backend-api-db/spec.md` FR-013.
+
+    ErrorWithClassDetails:
+      type: object
+      description: |
+        The DELETE-Teacher 409 envelope. Extends the standard
+        `ErrorResponse` with the singular `details` block carrying
+        the single affected class's `ulid` and `name`. The DB's
+        `UNIQUE INDEX uq_classes_form_teacher_id` guarantees at
+        most one such class exists; the array envelope and the
+        N > 5 truncation logic are superseded per 006 spec
+        Clarifications Session 2026-06-22 (DELETE-Teacher 409
+        envelope — one-to-one simplification). The `details`
+        extension is additive and forward-compatible.
+      required: [error, details]
+      properties:
+        error:
+          type: string
+          description: |
+            Human-readable error message embedding the class
+            name in double quotes, e.g.
+            `Teacher is assigned as form teacher of class "Class 1A". Reassign or delete that class first.`
+        details:
+          type: object
+          required: [classUlid, className]
+          properties:
+            classUlid:
+              type: string
+              minLength: 26
+              maxLength: 26
+              pattern: "^[0-9A-HJKMNP-TV-Z]{26}$"
+              description: |
+                The `ulid` of the single class that currently
+                references this teacher as form teacher.
+                Programmatic consumers can deep-link the admin
+                to `/classes/[ulid]/edit`.
+            className:
+              type: string
+              minLength: 1
+              maxLength: 255
+              description: |
+                The `name` of the single class that currently
+                references this teacher as form teacher.
+
+  responses:
+    Unauthorized:
+      description: |
+        No valid session cookie was presented (the `withAuth`
+        middleware from `004-user-auth` rejects with `401`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Authentication required"
+    ForbiddenCsrf:
+      description: |
+        The `X-CSRF-Token` header does not match the `csrfToken`
+        cookie (the double-submit-cookie middleware from
+        `005-security-hardening` rejects with `403`). GET
+        requests are exempt per Principle IX.3.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "CSRF token mismatch"
+    UnsupportedMediaType:
+      description: |
+        The request body is not `Content-Type: application/json`
+        (per `003-backend-api-db/spec.md` FR-013). DELETE
+        requests have no body and are not subject to the 415
+        check.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Content-Type must be application/json"
+    InternalServerError:
+      description: |
+        Unhandled server failure. The `error` field is a
+        human-readable summary; the implementation MUST NOT
+        leak internal messages, stack traces, or database
+        column names (per Constitution Principle VII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Internal server error"
+    ServiceUnavailable:
+      description: |
+        The MySQL data store is unavailable. The application
+        returns 503 on a connection-pool exhaustion or a
+        typeORM `ConnectionNotFoundError`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "Service unavailable"

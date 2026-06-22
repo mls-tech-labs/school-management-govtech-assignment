@@ -97,8 +97,24 @@
   (teachers, classes, their reference lists) in detail; adding auth
   endpoints there would dilute that focus. FR-022 is the single
   source of truth for the version-prefix inventory. 004 owns the
+
+### Session 2026-06-22 (Stage 3 propagation from 006-teachers-classes-mutations)
+
+- Q1 (FR-013 status-code table — `200 OK` row and `404 Not Found` clarification on DELETE): Stage 3 introduces UPDATE and DELETE on Teachers and Classes per `specs/006-teachers-classes-mutations/spec.md`. FR-013 below is updated to gain a `200 OK` row for successful UPDATE responses (Stage 3 FR-007 / FR-008) and to clarify that the existing `404 Not Found` row covers the idempotent-second-DELETE case (a second `DELETE /api/v1.0/teachers/[ulid]` or `DELETE /api/v1.0/classes/[ulid]` on a `ulid` that no longer exists returns 404 with the standard envelope — the consumer treats 404 as informational on DELETE, not as an error). The Stage 3 spec is the canonical reference for the per-endpoint behavior; this 003 spec mirrors it in the cross-cutting FR-013 table.
+- Q2 (FR-013 — `previousModifiedAt` extension on PUT 200 responses): the Stage 3 PUT 200 response body (per 006 FR-007 / FR-016) MUST include the row's pre-update `modified_at` value as a sibling field named `previousModifiedAt`. This is an additive extension to the standard `{ "data": {...} }` response body (the list endpoint uses `{ "data": [...] }`; the single-resource UPDATE response uses `{ ...row, "previousModifiedAt": "..." }`). Clients that ignore `previousModifiedAt` continue to function correctly — the extension is forward-compatible. FR-013 is updated to note the extension; the per-spec amendment to FR-013 is in this spec's FR-013 below.
+- Q3 (error envelope — optional `details` extension for DELETE-Teacher 409): the standard `{ "error": "..." }` envelope from FR-012 gains an optional `details` field that carries structured information about the failure. The first Stage 3 use case is `DELETE /api/v1.0/teachers/[ulid]` returning 409 (006 FR-009, updated per `specs/006-teachers-classes-mutations/spec.md` Clarifications Session 2026-06-22 (DELETE-Teacher 409 envelope — one-to-one simplification), propagated here), where `details` carries `{ "classUlid": "<classUlid>", "className": "<className>" }` (singular — the `UNIQUE INDEX uq_classes_form_teacher_id` on `classes.form_teacher_id` guarantees at most one affected class; the prior array shape `{ "classUlids": [...], "classNames": [...] }` is superseded). The `error` field stays canonical and human-readable; `details` is a machine-readable extension that downstream consumers (UI notifications, automated tests, deep-links to `/classes/[ulid]/edit`) can use without parsing the error string. Other endpoints MAY use the `details` extension but are not required to. FR-012 below is updated to note the optional `details` extension with the singular shape.
+- Q4 (error envelope — `details.classNames` truncation policy): **Superseded by `specs/006-teachers-classes-mutations/spec.md` Clarifications Session 2026-06-22 (DELETE-Teacher 409 envelope — one-to-one simplification), propagated here**. The prior N > 5 truncation logic (first-5-names + `… and N more` suffix) is unreachable under the one-to-one DB constraint (`UNIQUE INDEX uq_classes_form_teacher_id` — N is always 0 or 1). The wire envelope becomes singular (`details.classUlid` / `details.className`); no truncation, no array, no suffix. FR-012 / FR-013 below are updated to reflect the singular envelope; this UI-presentation contract is owned by 006 and reflected here for cross-cutting completeness.
   auth endpoints' functional details (request body shape, response
   shape, error envelope, session-fixation prevention).
+
+### Session 2026-06-22 (DELETE-Teacher 409 envelope — one-to-one simplification propagation from 006)
+
+- Q1 (per-spec propagation of `specs/006-teachers-classes-mutations/spec.md` Clarifications Session 2026-06-22 (DELETE-Teacher 409 envelope — one-to-one simplification)): the FR-012 example and the Session 2026-06-22 (Stage 3 propagation) Q3 / Q4 wording above are updated from arrays (`classUlids[]` / `classNames[]`) to singular (`classUlid` / `className`). The Stage 3 error envelope for `DELETE /api/v1.0/teachers/[ulid]` 409 is `{ "error": "Teacher is assigned as form teacher of class \"<className>\". Reassign or delete that class first.", "details": { "classUlid": "<classUlid>", "className": "<className>" } }`. The `details` extension on the error envelope (per FR-012) is preserved — it carries structured info for programmatic consumers (deep-link to `/classes/[ulid]/edit`, automated tests). The Q4 truncation policy (first-5-names + `… and N more`) is unreachable under the one-to-one DB constraint and is superseded. The same propagation is mirrored in `specs/002-classes/spec.md` (Session 2026-06-22 Stage 3 propagation Q2 wording + Edge Cases bullet). `specs/001-teachers/spec.md` does not reference the DELETE-Teacher 409 envelope and needs no propagation.
+
+### Session 2026-06-22 (v2.6.0 expansion — single-resource GET, per constitution v2.6.0)
+
+- Q1 (two new single-resource GET endpoints — `GET /api/v1.0/teachers/[ulid]` and `GET /api/v1.0/classes/[ulid]`): the constitution v2.6.0 amendment (per the Sync Impact Report at the top of `.specify/memory/constitution.md`) authorises two new single-resource fetch endpoints in the Stage 3 In Scope block. The teachers endpoint is added to FR-002 (Teachers API surface) below; the classes endpoint is added to FR-003 (Classes API surface) below. Both endpoints are authenticated (Principle IV — `401` without a valid session cookie, inherited from FR-013 below) and CSRF-exempt (GET is exempt per Principle IX.3). Both endpoints return `404 Not Found` with `{ "error": "Teacher not found" }` / `{ "error": "Class not found" }` on an unknown `ulid`; the `404 Not Found` row in FR-013 below is extended to cover these two new endpoints (the row already covered DELETE-second-call; the GET-`[ulid]` 404 is an additive use of the same status). The endpoints are the data source for the Stage 3 Edit Teacher / Edit Class pages owned by `specs/006-teachers-classes-mutations/spec.md` FR-002 / FR-003; the previous RSC + typeORM fallback in 006 is superseded.
+- Q2 (FR-022 prefix inventory — gap closure for v2.5.0 + addition of v2.6.0 endpoints): the previous FR-022 listed only the Stage 1 and Stage 2 endpoints under the `/api/v1.0/` prefix and missed the four Stage 3 v2.5.0 PUT/DELETE endpoints (introduced by the constitution v2.5.0 amendment). The v2.6.0 amendment closes that gap and adds the two new v2.6.0 GET endpoints. FR-022 below is restructured to list all endpoints grouped by stage, making FR-022 the single source of truth for the versioned-prefix inventory. This is a per-spec amendment to FR-022; the cross-cutting prefix rule is unchanged.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -306,6 +322,21 @@ code mapping.
     `200 OK` with `{ "data": [ ...teachers ] }`, each entry carrying
     `ulid` (per FR-021), `name`, `subject` (nested `{ ulid, name }`
     per FR-020), `email`, and `contactNumber`.
+  - `GET /api/v1.0/teachers/[ulid]` (NEW, per constitution v2.6.0) —
+    single-resource fetch on a Teacher. Success returns HTTP
+    `200 OK` with the teacher record in the same shape as a single
+    entry in `GET /api/v1.0/teachers` (per the previous bullet):
+    `ulid`, `name`, `subject` (nested `{ ulid, name }` per FR-020),
+    `email`, and `contactNumber`. The endpoint returns `404 Not
+    Found` with `{ "error": "Teacher not found" }` on an unknown
+    `ulid` (per the cross-cutting FR-013 status-code table, which
+    is extended by the v2.6.0 amendment to cover this GET-`[ulid]`
+    404 case). The endpoint is the data source for the Stage 3 Edit
+    Teacher page (`/teachers/[ulid]/edit`, owned by
+    `specs/006-teachers-classes-mutations/spec.md` FR-002); the
+    previous RSC + typeORM fallback in 006 is superseded by this
+    endpoint. See Clarifications, Session 2026-06-22 (v2.6.0
+    expansion).
   - `GET /api/v1.0/subjects` — list all active subjects; success
     returns HTTP `200 OK` with `{ "data": [ { "name", "active",
     "ulid" } ] }`, filtered to entries where `active = true`. (See
@@ -325,6 +356,21 @@ code mapping.
     `200 OK` with `{ "data": [ ...classes ] }`. Each entry includes
     `ulid` (per FR-021), `name`, `level` (nested `{ ulid, name }`),
     and `formTeacher` (nested `{ ulid, name }`).
+  - `GET /api/v1.0/classes/[ulid]` (NEW, per constitution v2.6.0) —
+    single-resource fetch on a Class. Success returns HTTP
+    `200 OK` with the class record in the same shape as a single
+    entry in `GET /api/v1.0/classes` (per the previous bullet):
+    `ulid`, `name`, `level` (nested `{ ulid, name }`), and
+    `formTeacher` (nested `{ ulid, name }`). The endpoint returns
+    `404 Not Found` with `{ "error": "Class not found" }` on an
+    unknown `ulid` (per the cross-cutting FR-013 status-code table,
+    which is extended by the v2.6.0 amendment to cover this
+    GET-`[ulid]` 404 case). The endpoint is the data source for
+    the Stage 3 Edit Class page (`/classes/[ulid]/edit`, owned by
+    `specs/006-teachers-classes-mutations/spec.md` FR-003); the
+    previous RSC + typeORM fallback in 006 is superseded by this
+    endpoint. See Clarifications, Session 2026-06-22 (v2.6.0
+    expansion).
   - `GET /api/v1.0/levels` — list all active levels; success returns
     HTTP `200 OK` with `{ "data": [ { "name", "active", "ulid" } ] }`,
     filtered to entries where `active = true`. (See Clarifications,
@@ -514,9 +560,29 @@ code mapping.
 - **FR-011**: All list endpoints MUST return a JSON body of the form
   `{ "data": [ ... ] }` on success. The array MAY be empty.
 - **FR-012**: All error responses across all endpoints MUST use the
-  JSON envelope `{ "error": "Some meaningful error message" }`.
+  JSON envelope `{ "error": "Some meaningful error message" }`. The
+  envelope MAY be extended with an optional `details` field that
+  carries structured, machine-readable information about the failure
+  (e.g., `{ "details": { "classUlid": "<classUlid>", "className": "<className>" } }`
+  on `DELETE /api/v1.0/teachers/[ulid]` 409 per `specs/006-teachers-classes-mutations/spec.md`
+  FR-009, updated per `specs/006-teachers-classes-mutations/spec.md`
+  Clarifications Session 2026-06-22 (DELETE-Teacher 409 envelope —
+  one-to-one simplification) — the prior array shape `{ "classUlids": [...], "classNames": [...] }`
+  is superseded because the `UNIQUE INDEX uq_classes_form_teacher_id`
+  constraint guarantees at most one affected class; N is always 0 or
+  1). The `error` field stays canonical and human-readable; the
+  `details` extension is opt-in per endpoint and consumers that ignore
+  it continue to function correctly. Per Clarifications, Session
+  2026-06-22 (Stage 3 propagation), the first Stage 3 use case is
+  DELETE-Teacher 409; future endpoints MAY adopt the same pattern.
 - **FR-013**: The system MUST map the following failure conditions to
   the following HTTP status codes:
+  - `200 OK` — successful UPDATE responses on `PUT /api/v1.0/teachers/[ulid]`
+    and `PUT /api/v1.0/classes/[ulid]` (per Stage 3, `specs/006-teachers-classes-mutations/spec.md`
+    FR-007 / FR-008). The 200 response body MAY include the optional
+    `previousModifiedAt` extension described in the Stage 3 spec (FR-007
+    / FR-016); clients that ignore the extension continue to function
+    correctly.
   - `400 Bad Request` — request body is missing, malformed, or fails
     field-level validation (e.g., invalid email format, invalid contact
     number, missing required field, unknown `subject.ulid`, unknown
@@ -531,13 +597,29 @@ code mapping.
     2026-06-21, Q1 — status code propagation: 401 was promoted
     from a 004 Assumption into this cross-cutting table.)
   - `404 Not Found` — a referenced teacher (`formTeacher.ulid`) does
-    not exist when creating a class.
+    not exist when creating a class; OR a `DELETE /api/v1.0/teachers/[ulid]`
+    / `DELETE /api/v1.0/classes/[ulid]` request targets a `ulid` that
+    no longer exists (idempotent-second-DELETE per Stage 3 Principle X.2);
+    OR a `GET /api/v1.0/teachers/[ulid]` / `GET /api/v1.0/classes/[ulid]`
+    request targets a `ulid` that does not match any registered
+    teacher / class (per the constitution v2.6.0 expansion; the
+    error envelope is `{ "error": "Teacher not found" }` /
+    `{ "error": "Class not found" }`). The consumer treats 404 on
+    DELETE and on GET-`[ulid]` as informational, not as an error;
+    the standard envelope is returned in all cases.
   - `409 Conflict` — a uniqueness or referential-integrity rule is
     violated: duplicate teacher email, duplicate form teacher,
     duplicate class `name` (globally unique per FR-009), or a
     duplicate `ulid` (theoretical ULID collision caught by the
     per-table `UNIQUE` index per FR-021; vanishingly rare in practice
-    but covered for defense-in-depth).
+    but covered for defense-in-depth). Stage 3 extends this row with
+    two additional 409 cases: `DELETE /api/v1.0/teachers/[ulid]` against
+    a teacher currently assigned as form teacher (per
+    `specs/006-teachers-classes-mutations/spec.md` FR-009 / Principle
+    X.1), and `PUT /api/v1.0/classes/[ulid]` updating `formTeacher.ulid`
+    to a teacher who is already the form teacher of a different class
+    (per 006 FR-008 / Principle X.3). The DELETE-Teacher 409 carries the
+    optional `details` extension (FR-012).
   - `415 Unsupported Media Type` — request `Content-Type` is not
     `application/json`.
   - `500 Internal Server Error` — unexpected server-side failure.
@@ -545,7 +627,8 @@ code mapping.
     store, per 004) is briefly unreachable.
   The Stage 1 version prefix `/api/v1.0/` (per FR-022) does not change
   the status code mapping — the same status codes apply to the
-  versioned paths.
+  versioned paths. The Stage 3 spec (`specs/006-teachers-classes-mutations/spec.md`)
+  is the canonical reference for the Stage 3 200 / 409 / 404 additions.
 - **FR-014**: All API writes MUST be atomic: a request that fails MUST
   NOT leave partial data in the data store.
 - **FR-015**: All error messages in the agreed envelope MUST be
@@ -567,22 +650,48 @@ code mapping.
   the reference-list seed list — is removed in line with FR-016; the
   `subjects` and `levels` seed data is delivered by the user's own SQL
   against the user-prepared MySQL container).
-- **FR-022**: All Stage 1 and Stage 2 API endpoints MUST be exposed
-  under the path prefix `/api/v1.0/`. The seven endpoints are:
+- **FR-022**: All API endpoints MUST be exposed under the path prefix
+  `/api/v1.0/`. The endpoints are:
+
+  **Stage 1** (per Clarifications, Session 2026-06-21):
   - `POST /api/v1.0/teachers` and `GET /api/v1.0/teachers` (owned by
     `001-teachers`).
   - `GET /api/v1.0/subjects` (owned by `001-teachers`).
   - `POST /api/v1.0/classes` and `GET /api/v1.0/classes` (owned by
     `002-classes`).
   - `GET /api/v1.0/levels` (owned by `002-classes`).
+
+  **Stage 2** (per Clarifications, Session 2026-06-21 (version-prefix
+  propagation) — the unversioned exemption for the three auth
+  endpoints is removed):
   - `POST /api/v1.0/login` and `POST /api/v1.0/logout` and
     `GET /api/v1.0/me` (owned by `004-user-auth`).
+
+  **Stage 3 v2.5.0** (per constitution v2.5.0 amendment; added to
+  FR-022 by the v2.6.0 amendment to close a pre-existing gap in the
+  prefix inventory):
+  - `PUT /api/v1.0/teachers/[ulid]` and
+    `DELETE /api/v1.0/teachers/[ulid]` (owned by
+    `006-teachers-classes-mutations`).
+  - `PUT /api/v1.0/classes/[ulid]` and
+    `DELETE /api/v1.0/classes/[ulid]` (owned by
+    `006-teachers-classes-mutations`).
+
+  **Stage 3 v2.6.0** (NEW, per constitution v2.6.0 amendment and
+  Clarifications, Session 2026-06-22 (v2.6.0 expansion)):
+  - `GET /api/v1.0/teachers/[ulid]` (owned by
+    `006-teachers-classes-mutations`).
+  - `GET /api/v1.0/classes/[ulid]` (owned by
+    `006-teachers-classes-mutations`).
+
   The version string `v1.0` is literal (not a placeholder for "current
   major.minor"); future stages add `v1.1`, `v2.0`, etc. The contracts
-  in `001-teachers/contracts/`, `002-classes/contracts/`, and
-  `004-user-auth/contracts/` MUST mirror the same prefix. Unversioned
-  paths (e.g., `/api/teachers`, `/api/login`) are out of scope; the
-  route handlers MUST NOT be reachable at the unversioned path.
+  in `001-teachers/contracts/`, `002-classes/contracts/`,
+  `004-user-auth/contracts/`, and the Stage 3 contracts in
+  `006-teachers-classes-mutations/contracts/` MUST mirror the same
+  prefix. Unversioned paths (e.g., `/api/teachers`, `/api/login`)
+  are out of scope; the route handlers MUST NOT be reachable at the
+  unversioned path.
 
 ### Key Entities
 

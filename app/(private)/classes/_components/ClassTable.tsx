@@ -1,5 +1,7 @@
 "use client";
 
+import { RowActionsMenu } from "@/app/(private)/teachers/_components/RowActionsMenu";
+
 /**
  * Wire shape of a class entry in `GET /api/v1.0/classes` (per
  * `003-backend-api-db/spec.md` Clarifications, Session 2026-06-20
@@ -14,7 +16,13 @@ export interface ClassRow {
   formTeacher: { ulid: string; name: string };
 }
 
-export function ClassTable({ classes }: { classes: ClassRow[] }) {
+export interface ClassTableProps {
+  classes: ClassRow[];
+  /** Called after a successful delete (or silent 404) so the list can refresh. */
+  onClassDeleted?: () => void;
+}
+
+export function ClassTable({ classes, onClassDeleted }: ClassTableProps) {
   return (
     <div className="card p-0 overflow-x-auto">
       <table className="w-full border-collapse text-left">
@@ -24,6 +32,7 @@ export function ClassTable({ classes }: { classes: ClassRow[] }) {
             <th className="px-4 py-3 font-semibold">Class Level</th>
             <th className="px-4 py-3 font-semibold">Class Name</th>
             <th className="px-4 py-3 font-semibold">Form Teacher</th>
+            <th className="px-4 py-3 font-semibold text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -36,6 +45,25 @@ export function ClassTable({ classes }: { classes: ClassRow[] }) {
               <td className="px-4 py-3">{c.level.name}</td>
               <td className="px-4 py-3">{c.name}</td>
               <td className="px-4 py-3">{c.formTeacher.name}</td>
+              <td className="px-4 py-3 text-right">
+                {onClassDeleted ? (
+                  <RowActionsMenu
+                    ulid={c.ulid}
+                    name={c.name}
+                    resource="class"
+                    onDeleted={onClassDeleted}
+                  />
+                ) : (
+                  <RowActionsMenu
+                    ulid={c.ulid}
+                    name={c.name}
+                    resource="class"
+                    onDeleted={() => {
+                      /* parent didn't pass a refresh callback — no-op */
+                    }}
+                  />
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

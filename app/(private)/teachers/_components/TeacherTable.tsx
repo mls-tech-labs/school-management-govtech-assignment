@@ -1,5 +1,7 @@
 "use client";
 
+import { RowActionsMenu } from "./RowActionsMenu";
+
 /**
  * Wire shape of a teacher entry in
  * `GET /api/v1.0/teachers` (per
@@ -17,9 +19,11 @@ export interface TeacherRow {
 
 export interface TeacherTableProps {
   teachers: TeacherRow[];
+  /** Called after a successful delete (or silent 404) so the list can refresh. */
+  onTeacherDeleted?: () => void;
 }
 
-export function TeacherTable({ teachers }: TeacherTableProps) {
+export function TeacherTable({ teachers, onTeacherDeleted }: TeacherTableProps) {
   const fmt = (n: string) => `${n.slice(0, 4)} ${n.slice(4)}`;
   return (
     <div className="card p-0 overflow-x-auto">
@@ -31,6 +35,7 @@ export function TeacherTable({ teachers }: TeacherTableProps) {
             <th className="px-4 py-3 font-semibold">Subject</th>
             <th className="px-4 py-3 font-semibold">Email</th>
             <th className="px-4 py-3 font-semibold">Work Contact</th>
+            <th className="px-4 py-3 font-semibold text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -44,6 +49,25 @@ export function TeacherTable({ teachers }: TeacherTableProps) {
               <td className="px-4 py-3">{t.subject.name}</td>
               <td className="px-4 py-3">{t.email}</td>
               <td className="px-4 py-3 whitespace-nowrap">{fmt(t.contactNumber)}</td>
+              <td className="px-4 py-3 text-right">
+                {onTeacherDeleted ? (
+                  <RowActionsMenu
+                    ulid={t.ulid}
+                    name={t.name}
+                    resource="teacher"
+                    onDeleted={onTeacherDeleted}
+                  />
+                ) : (
+                  <RowActionsMenu
+                    ulid={t.ulid}
+                    name={t.name}
+                    resource="teacher"
+                    onDeleted={() => {
+                      /* parent didn't pass a refresh callback — no-op */
+                    }}
+                  />
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
