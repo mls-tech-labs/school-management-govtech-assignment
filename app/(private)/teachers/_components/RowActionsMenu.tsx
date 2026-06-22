@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Dropdown, Modal, notification } from "antd";
+import { App, Dropdown } from "antd";
 import type { MenuProps } from "antd";
 import { getCsrfToken } from "@/lib/security/csrf-client";
 
@@ -60,10 +60,16 @@ export function RowActionsMenu({
   onDeleted,
 }: RowActionsMenuProps) {
   const router = useRouter();
+  // Context-bound modal/notification — these are picked up from the
+  // antd `<App>` wrapper at the root layout, so they correctly inherit
+  // ConfigProvider theme + locale and avoid the subtle `Dropdown`-click
+  // drop-through issues that the static `Modal.confirm` /
+  // `notification.error` APIs have on antd 5.x.
+  const { modal, notification: notificationApi } = App.useApp();
   const paths = RESOURCE_PATHS[resource];
 
   function handleDelete() {
-    Modal.confirm({
+    modal.confirm({
       title: `Delete ${resource} ${name}?`,
       content: "This action cannot be undone.",
       okText: "Delete",
@@ -98,7 +104,7 @@ export function RowActionsMenu({
               .json()
               .catch(() => ({}))) as DeleteErrorEnvelope;
             const message = body.error ?? "Conflict.";
-            notification.error({
+            notificationApi.error({
               message: "Cannot delete",
               description: message,
               placement: "topRight",
@@ -110,14 +116,14 @@ export function RowActionsMenu({
           const body = (await res
             .json()
             .catch(() => ({}))) as DeleteErrorEnvelope;
-          notification.error({
+          notificationApi.error({
             message: "Delete failed",
             description: body.error ?? `Request failed (${res.status})`,
             placement: "topRight",
             duration: 8,
           });
         } catch {
-          notification.error({
+          notificationApi.error({
             message: "Delete failed",
             description: "Network error. Please retry.",
             placement: "topRight",

@@ -1,7 +1,7 @@
 import "antd/dist/reset.css";
 import "./globals.css";
 import type { ReactNode } from "react";
-import { ConfigProvider } from "antd";
+import { App as AntdApp, ConfigProvider } from "antd";
 import { SiteHeader } from "@/components/SiteHeader";
 
 export const metadata = {
@@ -44,8 +44,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             token: { colorPrimary: "#1d4ed8" },
           }}
         >
-          <SiteHeader />
-          <main className="container-page py-6">{children}</main>
+          {/* antd 5 App context — required so that the
+              `App.useApp()` hook in client components can access
+              the context-bound `modal.confirm` / `notification` /
+              `message` instances. The static `Modal.confirm` still
+              works but does not pick up ConfigProvider theme +
+              locale overrides; using the App context is the
+              recommended antd 5 path. */}
+          <AntdApp>
+            <SiteHeader />
+            <main className="container-page py-6">{children}</main>
+          </AntdApp>
         </ConfigProvider>
       </body>
     </html>

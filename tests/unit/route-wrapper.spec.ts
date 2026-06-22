@@ -35,6 +35,27 @@ describe("withApiContract", () => {
     expect(res.status).toBe(200);
   });
 
+  it("DELETE bypasses content-type check (no body → Content-Type has no meaning per RFC 7231)", async () => {
+    // Browsers' fetch() does NOT set Content-Type on a body-less
+    // DELETE, so requiring it would produce a spurious 415 on every
+    // legitimate DELETE. The gate must exempt DELETE alongside
+    // GET/HEAD.
+    const wrapped = withApiContract(
+      async () => new Response(JSON.stringify({ ulid: "x" }), { status: 200 }),
+    );
+    const res = await wrapped(nextReq("DELETE"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ulid: "x" });
+  });
+
+  it("DELETE still passes when Content-Type IS application/json (idempotent)", async () => {
+    const wrapped = withApiContract(
+      async () => new Response(JSON.stringify({ ulid: "x" }), { status: 200 }),
+    );
+    const res = await wrapped(nextReq("DELETE", "application/json"));
+    expect(res.status).toBe(200);
+  });
+
   it("catches unhandled throws → 500 with non-leaking message", async () => {
     const wrapped = withApiContract(async () => {
       throw new Error("DB password is hunter2 — leaked!");
