@@ -43,6 +43,16 @@ interface DeleteErrorEnvelope {
   };
 }
 
+/**
+ * Resource-specific routing table. Hardcoded (not derived from
+ * `resource + "s"`) because the classes plural is irregular —
+ * `class` + "s" would yield `/classs/...` (Next.js 404).
+ */
+const RESOURCE_PATHS: Record<"teacher" | "class", { edit: string; api: string }> = {
+  teacher: { edit: "/teachers", api: "/api/v1.0/teachers" },
+  class: { edit: "/classes", api: "/api/v1.0/classes" },
+};
+
 export function RowActionsMenu({
   ulid,
   name,
@@ -50,6 +60,7 @@ export function RowActionsMenu({
   onDeleted,
 }: RowActionsMenuProps) {
   const router = useRouter();
+  const paths = RESOURCE_PATHS[resource];
 
   function handleDelete() {
     Modal.confirm({
@@ -61,7 +72,7 @@ export function RowActionsMenu({
       maskClosable: true,
       async onOk() {
         try {
-          const res = await fetch(`/api/v1.0/${resource}s/${ulid}`, {
+          const res = await fetch(`${paths.api}/${ulid}`, {
             method: "DELETE",
             headers: {
               "X-CSRF-Token": getCsrfToken() ?? "",
@@ -118,21 +129,28 @@ export function RowActionsMenu({
   }
 
   const items: MenuProps["items"] = [
-    {
-      key: "edit",
-      label: "Edit",
-      onClick: () => router.push(`/${resource}s/${ulid}/edit`),
-    },
-    {
-      key: "delete",
-      label: "Delete",
-      danger: true,
-      onClick: () => handleDelete(),
-    },
+    { key: "edit", label: "Edit" },
+    { key: "delete", label: "Delete", danger: true },
   ];
 
+  // Single menu-level onClick dispatching by key — the canonical
+  // antd 5 pattern. Per-item onClick is also supported by rc-menu
+  // but the menu-level handler is the one guaranteed to fire on
+  // every build (and it makes the key → handler mapping explicit).
+  function onMenuClick(info: { key: string }) {
+    if (info.key === "edit") {
+      router.push(`${paths.edit}/${ulid}/edit`);
+    } else if (info.key === "delete") {
+      handleDelete();
+    }
+  }
+
   return (
-    <Dropdown menu={{ items }} trigger={["click"]} placement="bottomRight">
+    <Dropdown
+      menu={{ items, onClick: onMenuClick }}
+      trigger={["click"]}
+      placement="bottomRight"
+    >
       <button
         type="button"
         aria-label="Row actions"

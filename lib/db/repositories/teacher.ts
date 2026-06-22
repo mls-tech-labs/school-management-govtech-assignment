@@ -99,6 +99,23 @@ export async function findTeacherByUlid(ulid: string): Promise<Teacher | null> {
 }
 
 /**
+ * Resolve a `teachers.id` (surrogate PK) to the row's `ulid` and
+ * `name`. Used by the Stage 3 `GET /api/v1.0/classes/[ulid]` route
+ * handler to surface the authoritative form-teacher row — the join
+ * key is the surrogate `id` (per FR-019), not the ulid.
+ */
+export async function findTeacherById(
+  id: string,
+): Promise<{ id: string; ulid: string; name: string } | null> {
+  const ds = await getDataSource();
+  const row = await ds.getRepository(Teacher).findOne({
+    where: { id },
+    select: { id: true, ulid: true, name: true },
+  });
+  return row ? { id: row.id, ulid: row.ulid, name: row.name } : null;
+}
+
+/**
  * Update a teacher and capture the pre-update `modified_at` value.
  *
  * Per `006-teachers-classes-mutations/data-model.md` §5: the PUT 200

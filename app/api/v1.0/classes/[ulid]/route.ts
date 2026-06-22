@@ -9,7 +9,7 @@ import {
   deleteClassById,
   findClassByFormTeacherId,
 } from "@/lib/db/repositories/class";
-import { findTeacherByUlid } from "@/lib/db/repositories/teacher";
+import { findTeacherById, findTeacherByUlid } from "@/lib/db/repositories/teacher";
 import {
   findLevelIdByUlid,
   findLevelById,
@@ -57,7 +57,9 @@ async function handleGet(
     const klass = await findClassByUlid(validated);
     if (!klass) return jsonError(404, "Class not found");
 
-    const teacher = await findTeacherByUlid(klass.formTeacherId);
+    // `klass.formTeacherId` and `klass.levelId` are surrogate FKs
+    // (per FR-019), not ulids — so we look both up by id.
+    const teacher = await findTeacherById(klass.formTeacherId);
     const levelRow = await findLevelById(klass.levelId);
 
     return jsonOk({

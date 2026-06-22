@@ -5,6 +5,7 @@ import { toApiError } from "@/lib/api/db-error";
 import { withAuth, type AuthedRequest } from "@/lib/auth/middleware";
 import {
   findTeacherByUlid,
+  findSubjectById,
   findSubjectByUlid,
   updateTeacherAndReturnPreviousModifiedAt,
   deleteTeacherById,
@@ -53,7 +54,9 @@ async function handleGet(
     const teacher = await findTeacherByUlid(validated);
     if (!teacher) return jsonError(404, "Teacher not found");
 
-    const subject = await findSubjectByUlid(teacher.subjectId);
+    // `teacher.subjectId` is the surrogate `subjects.id` FK value, not
+    // the ulid — so we look it up by id (per FR-019).
+    const subject = await findSubjectById(teacher.subjectId);
     return jsonOk({
       ulid: teacher.ulid,
       name: teacher.name,
