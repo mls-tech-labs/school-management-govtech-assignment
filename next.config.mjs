@@ -43,6 +43,7 @@ const companionHeaders = Object.entries(
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output:'standalone',
   reactStrictMode: true,
   experimental: {
     // App Router is default in Next.js 15.

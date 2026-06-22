@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "cpx \".next/static/**/*\" \".next/standalone/.next/static\" && node .next/standalone/server.js",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -37,6 +37,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.20",
+    "cpx2": "^9.0.0",
     "ioredis-mock": "^8.9.0",
     "jsdom": "^25.0.0",
     "postcss": "^8.4.47",

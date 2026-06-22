@@ -12,18 +12,28 @@ A small admin portal for managing **Teachers** and **Classes** in a private scho
 # 1. Copy environment template
 cp .env.example .env.local
 
-# 2. Bring up MySQL + Redis (auto-loads docker/mysql/init/01-schema-and-seed.sql
-#    on first boot — this is the user-prepared MySQL container per FR-016: the
-#    schema, audit columns, ulid CHAR(26) UNIQUE columns, FK constraints, UNIQUE
-#    indexes, the subjects / levels reference-list seeds, AND the `users` table
-#    are all created by the SQL bootstrap; no typeORM migration runs on app boot)
+# 2. Bring up MySQL + Redis. On first boot, docker auto-loads
+#    docker/mysql/init/01-schema-and-seed.sql — that single file is what
+#    creates the schema, audit columns, ulid CHAR(26) UNIQUE columns, FK
+#    constraints, UNIQUE indexes, the subjects / levels reference-list
+#    seeds, AND the `users` table (per FR-016: no typeORM migration runs on
+#    app boot). If you ever need to re-run it manually after the first boot:
+#      docker exec -i pvt-edu-mysql mysql -uroot -prootpass edu_inst \
+#        < docker/mysql/init/01-schema-and-seed.sql
 docker compose -f docker/docker-compose.yml up -d mysql redis
 
-# 3. Bring up the app (no migration step — the app connects to the existing MySQL
+# 3. Seed an admin login user. The script emits an `INSERT INTO users (...)`
+#    statement on stdout, hashed with the same argon2id envelope the runtime
+#    verifies with (the seed path and verify path stay in lockstep). Pipe the
+#    output straight into the MySQL container:
+npm run seed:admin -- --username admin --password 'YourP@ssw0rd!' --confirm \
+  | docker exec -i pvt-edu-mysql mysql -uroot -prootpass edu_inst
+
+# 4. Bring up the app (no migration step — the app connects to the existing MySQL
 #    + Redis). The app refuses to boot without `REDIS_URL` (fail-closed).
 docker compose -f docker/docker-compose.yml up -d --build app
 
-# 4. Open the portal — you will be redirected to /login
+# 5. Open the portal — you will be redirected to /login
 open http://localhost:3000
 ```
 
@@ -39,22 +49,54 @@ docker compose -f docker/docker-compose.yml up -d --build app
 
 ## Quick start (local dev, no Docker)
 
+After cloning the repo locally, run the following in order:
+
 ```bash
-npm ci
-# Start the user-prepared MySQL + Redis containers (or any local MySQL 8 +
-# Redis 7 instances with the schema already bootstrapped via
-# docker/mysql/init/01-schema-and-seed.sql):
+# 1. Install dependencies
+npm install
+
+# 2. Production build (catches type / lint errors before you boot the server)
+npm run build
+
+# 3. Bring up MySQL + Redis. On first boot, docker auto-loads
+#    docker/mysql/init/01-schema-and-seed.sql — that single file is what
+#    creates the schema, audit columns, ulid CHAR(26) UNIQUE columns, FK
+#    constraints, UNIQUE indexes, the subjects / levels reference-list
+#    seeds, AND the `users` table (per FR-016: no typeORM migration runs on
+#    app boot). If you ever need to re-run it manually after the first boot:
+#      docker exec -i pvt-edu-mysql mysql -uroot -prootpass edu_inst \
+#        < docker/mysql/init/01-schema-and-seed.sql
 docker compose -f docker/docker-compose.yml up -d mysql redis
-cp .env.example .env.local   # then edit credentials if needed
-npm run dev
+
+# 4. Configure the environment. Copy .env.example and edit the values that
+#    differ from the docker-compose defaults — at minimum: the MySQL
+#    connection (host / port / user / password / database), REDIS_URL, and
+#    SESSION_COOKIE_SECURE (set to `false` in local dev over plain HTTP).
+cp .env.example .env.local
+
+# 5. Seed an admin login user. The script emits an `INSERT INTO users (...)`
+#    statement on stdout, hashed with the same argon2id envelope the runtime
+#    verifies with (the seed path and verify path stay in lockstep). Pipe the
+#    output straight into the MySQL container:
+npm run seed:admin -- --username admin --password 'YourP@ssw0rd!' --confirm \
+  | docker exec -i pvt-edu-mysql mysql -uroot -prootpass edu_inst
+
+# 6. Start the production server (against the build from step 2)
+npm run start
 ```
 
-Open <http://localhost:3000>. **Do not** run any migration command — there is no
-migration set in Stage 1 / Stage 2 (per FR-016, Session 2026-06-21).
+Open <http://localhost:3000>. 
+
+To wipe and start fresh:
+
+```bash
+docker compose -f docker/docker-compose.yml down -v
+docker compose -f docker/docker-compose.yml up -d mysql redis   # re-seeds the schema
+```
 
 ---
 
-## Seed an admin user (Stage 2 — 004-user-auth)
+## Seed an admin user
 
 The `users` table is created by the SQL bootstrap (in
 `docker/mysql/init/01-schema-and-seed.sql`); the application does **not**
@@ -82,8 +124,8 @@ pipelines, per spec FR-026).
 1. Open <http://localhost:3000>. Any unauthenticated visit lands on `/login`.
 2. Enter the seeded username + password.
 3. The browser stores the `pvt_edu_session` cookie (HttpOnly + Secure + SameSite=Strict)
-   and the `csrfToken` cookie (SameSite=Strict; used for the double-submit CSRF
-   control). Both expire after 30 minutes — no sliding extension.
+   which is configurable with .env file and the `csrfToken` cookie (SameSite=Strict; used
+   for the double-submit CSRF control). Both expire after 30 minutes — no sliding extension.
 4. After login, the route guard (`lib/auth/route-guard.tsx`) lets you reach
    `/teachers` and `/classes`.
 5. Click **Sign out** in the top-right to clear both cookies and the Redis
@@ -104,11 +146,6 @@ pipelines, per spec FR-026).
 | `npm run test:contract` | Contract tests (Next.js route handlers in isolation) |
 | `npm run test:integration` | Integration tests (require live MySQL container) |
 | `npm run seed:admin` | Hash a username + password + emit an `INSERT INTO users (...)` SQL statement on stdout (per spec FR-026; refuses to run without `--confirm`) |
-
-> **No migration scripts.** Stage 1 / Stage 2 ships with no typeORM migration set
-> and no boot-time seeder. The MySQL schema is user-prepared (see
-> `docker/mysql/init/01-schema-and-seed.sql`). The previous `migration:run`,
-> `migration:revert`, and `db:rebuild` scripts have been removed per FR-016.
 
 ---
 
@@ -156,12 +193,12 @@ scripts/
 └── seed-admin.ts                hash + emit INSERT INTO users (FR-026)
 middleware.ts                    Next.js middleware — CORS preflight + CSRF double-submit
 next.config.mjs                  static security headers via headers()
+Dockerfile
 tests/
 ├── unit/                        unit tests (auth/* + security/* + helpers)
 ├── contract/                    route-handler contract tests
 └── integration/                 full-stack tests against live MySQL + Redis
 docker/
-├── Dockerfile
 ├── docker-compose.yml           mysql + redis + app (no migration one-shot — per FR-016)
 ├── docker-compose.test.yml      mysql only, on port 3307, for integration tests
 └── mysql/init/01-schema-and-seed.sql
@@ -173,34 +210,208 @@ docker/
 
 The single source of truth is `specs/003-backend-api-db/contracts/common.yaml`. Per-feature contracts inherit from it. The shared security envelope (CORS / CSRF / static headers) lives in `specs/005-security-hardening/contracts/security.yaml`. All endpoints live under the `/api/v1.0/` version prefix (per FR-022, Session 2026-06-21).
 
+Every entity carries the cross-cutting `ulid` row handle (per FR-021) — a 26-character Crockford Base32 string, server-generated by `lib/ulid.ts` via a typeORM `@BeforeInsert()` hook on every entity. Audit columns are hidden (per FR-020). Reference fields are nested `{ ulid, name }` objects on both POST and GET — the server-side lookup is `ulid`-only; the nested `name` is a display hint (echoed back on the response).
+
 ### Endpoints
 
 | Method | Path | Body / Query | Auth | CSRF | Success | Error codes |
 |---|---|---|---|---|---|---|
-| POST | `/api/v1.0/login` | `{ username, password }` | — | exempt | `200` + empty | 400, 401, 415, 500, 503 |
-| POST | `/api/v1.0/logout` | — | — | exempt | `200` + empty | 503 |
-| GET  | `/api/v1.0/me` | — | session | exempt | `200` + `{ username, active, ulid, createdAt }` | 401 |
-| POST | `/api/v1.0/teachers` | `{ name, subject, email, contactNumber }` | session | required | `201` + `Teacher` JSON | 400, 401, 403, 409, 415, 500, 503 |
-| GET  | `/api/v1.0/teachers` | — | session | n/a | `200` + `{ data: Teacher[] }` | 401, 403, 500, 503 |
-| GET  | `/api/v1.0/subjects` | — | session | n/a | `200` + `{ data: Subject[] }` | 401, 403, 500, 503 |
-| POST | `/api/v1.0/classes` | `{ level, name, formTeacher }` | session | required | `201` + `Class` JSON | 400, 401, 403, 404, 409, 415, 500, 503 |
-| GET  | `/api/v1.0/classes` | — | session | n/a | `200` + `{ data: Class[] }` | 401, 403, 500, 503 |
-| GET  | `/api/v1.0/levels` | — | session | n/a | `200` + `{ data: Level[] }` | 401, 403, 500, 503 |
+| POST | `/api/v1.0/login`    | `{ username, password }` | — | exempt | `200` + empty body; sets `pvt_edu_session` + `csrfToken` cookies | 400, 401, 415, 500, 503 |
+| POST | `/api/v1.0/logout`   | — | — | exempt | `200` + empty body; clears the session cookie | 500 |
+| GET  | `/api/v1.0/me`       | — | session | exempt | `200` + `{ username, active, ulid, createdAt }` | 401, 500, 503 |
+| POST | `/api/v1.0/teachers` | `{ name, subject: { ulid, name }, email, contactNumber }` | session | required | `201` + `Teacher` JSON | 400, 401, 403, 409, 415, 500, 503 |
+| GET  | `/api/v1.0/teachers` | — | session | n/a | `200` + `{ data: Teacher[] }` | 401, 403, 415, 500, 503 |
+| GET  | `/api/v1.0/subjects` | — | session | n/a | `200` + `{ data: Subject[] }` | 401, 403, 415, 500, 503 |
+| POST | `/api/v1.0/classes`  | `{ level: { ulid, name }, name, formTeacher: { ulid, name } }` | session | required | `201` + `Class` JSON | 400, 401, 403, 404, 409, 415, 500, 503 |
+| GET  | `/api/v1.0/classes`  | — | session | n/a | `200` + `{ data: Class[] }` | 401, 403, 415, 500, 503 |
+| GET  | `/api/v1.0/levels`   | — | session | n/a | `200` + `{ data: Level[] }` | 401, 403, 415, 500, 503 |
 
-Every entry in every response carries the cross-cutting `ulid` row handle (per FR-021) — a 26-character Crockford Base32 string, server-generated by `lib/ulid.ts` via a typeORM `@BeforeInsert()` hook on every entity. Audit columns are hidden (per FR-020).
+### Authentication — `specs/004-user-auth/contracts/auth.yaml`
+
+#### `POST /api/v1.0/login`
+
+Public, CSRF-exempt (the login endpoint establishes the session the CSRF token is bound to).
+
+Request:
+
+```json
+{ "username": "admin", "password": "correct horse battery staple" }
+```
+
+Success `200` — empty body. Two cookies are set on the response:
+
+```
+Set-Cookie: pvt_edu_session=<opaque base64url 43 chars>; Path=/; Max-Age=1800; HttpOnly; Secure; SameSite=Strict
+Set-Cookie: csrfToken=<opaque base64url 43 chars>;     Path=/; Max-Age=1800; Secure; SameSite=Strict
+```
+
+Use `GET /api/v1.0/me` to fetch the profile. Unknown username, wrong password, and inactive user all return the same `401` body (no enumeration via the error message).
+
+Errors: `400` (`{"error":"\"username\" is required"}` / `{"error":"\"password\" is required"}` / `{"error":"\"rememberMe\" is not allowed"}`), `401` (`{"error":"Invalid username or password"}`), `415`, `500`, `503`.
+
+#### `POST /api/v1.0/logout`
+
+Public, CSRF-exempt, idempotent — runs even when no session is present so the cookie gets cleared.
+
+Success `200` — empty body. Cleared cookie:
+
+```
+Set-Cookie: pvt_edu_session=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict
+```
+
+Errors: `500`.
+
+#### `GET /api/v1.0/me`
+
+CSRF-exempt (safe method). Called by the route guard on every private page mount. The response shape is **exactly** four fields — no `id`, no audit columns.
+
+Success `200`:
+
+```json
+{
+  "username": "admin",
+  "active": true,
+  "ulid": "01HZX8K9V4Q7P3WJRN6B5M2YDC",
+  "createdAt": "2026-06-21T10:23:45.123456Z"
+}
+```
+
+Errors: `401` (`{"error":"Unauthorized"}`), `500`, `503`.
+
+### Teachers — `specs/003-backend-api-db/contracts/teachers.yaml`
+
+`Teacher` shape:
+
+```json
+{
+  "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T",
+  "name": "Mary",
+  "subject": { "ulid": "01H000000000000000000000A1", "name": "Mathematics" },
+  "email": "teachermary@gmail.com",
+  "contactNumber": "98129414"
+}
+```
+
+#### `POST /api/v1.0/teachers`
+
+Auth: session. CSRF: required.
+
+Request (any top-level `ulid` is ignored; `additionalProperties: false` rejects unknown fields):
+
+```json
+{
+  "name": "Mary",
+  "subject": { "ulid": "01H000000000000000000000A1", "name": "Mathematics" },
+  "email": "teachermary@gmail.com",
+  "contactNumber": "98129414"
+}
+```
+
+Success `201`: `Teacher` JSON (as above). The `ulid` is generated server-side.
+
+Errors: `400` (Joi — `{"error":"name is required"}`, `{"error":"email must be a valid email"}`; unknown `subject.ulid` → `{"error":"Invalid subject"}`), `401`, `403` (`{"error":"cors"}` / `{"error":"csrf"}`), `409` (`{"error":"Email already in use"}`), `415`, `500`, `503`.
+
+#### `GET /api/v1.0/teachers`
+
+Auth: session. CSRF: n/a.
+
+Success `200`:
+
+```json
+{
+  "data": [
+    { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T", "name": "Mary", "subject": { "ulid": "01H000000000000000000000A1", "name": "Mathematics" }, "email": "teachermary@gmail.com", "contactNumber": "88129414" },
+    { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7U", "name": "Ken",  "subject": { "ulid": "01H000000000000000000000A2", "name": "Mother Tongue Language" }, "email": "teacherken@gmail.com",   "contactNumber": "91824191" }
+  ]
+}
+```
+
+Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
+
+### Subjects — `specs/003-backend-api-db/contracts/subjects.yaml`
+
+`Subject` shape: `{ "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P70", "name": "Mathematics", "active": true }`. The list is read-only (seeded by the user against the user-prepared MySQL container).
+
+#### `GET /api/v1.0/subjects`
+
+Auth: session. CSRF: n/a.
+
+Success `200`: `{"data": [Subject, ...]}` (typically the 9 seeded entries — English, Mathematics, Science, Chinese, Malay, Tamil, Art, Music, Physical Education).
+
+Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
+
+### Classes — `specs/003-backend-api-db/contracts/classes.yaml`
+
+`Class` shape:
+
+```json
+{
+  "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T",
+  "level": { "ulid": "01H000000000000000000000B1", "name": "Primary 1" },
+  "name": "Class 1A",
+  "formTeacher": { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7R", "name": "Alice Tan" }
+}
+```
+
+#### `POST /api/v1.0/classes`
+
+Auth: session. CSRF: required. Performs a pre-INSERT existence check to distinguish `404 "Teacher not found"` from `409 "Teacher already assigned"`, then inserts. Race-safe via `UNIQUE(classes.name)` + `UNIQUE(classes.form_teacher_id)`.
+
+Request (any top-level `ulid` is ignored; `additionalProperties: false` rejects unknown fields):
+
+```json
+{
+  "level": { "ulid": "01H000000000000000000000B1", "name": "Primary 1" },
+  "name": "Class 1A",
+  "formTeacher": { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7R", "name": "Alice Tan" }
+}
+```
+
+Success `201`: `Class` JSON (as above). The `ulid` is generated server-side.
+
+Errors: `400` (Joi; unknown `level.ulid` → `{"error":"Invalid level"}`), `401`, `403` (`{"error":"cors"}` / `{"error":"csrf"}`), `404` (`{"error":"Teacher not found"}`), `409` (`{"error":"Class name already in use"}` / `{"error":"Teacher already assigned"}`), `415`, `500`, `503`.
+
+#### `GET /api/v1.0/classes`
+
+Auth: session. CSRF: n/a.
+
+Success `200`:
+
+```json
+{
+  "data": [
+    { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7T", "level": { "ulid": "01H000000000000000000000B1", "name": "Primary 1" }, "name": "Class 1A", "formTeacher": { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7R", "name": "Alice Tan" } },
+    { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7U", "level": { "ulid": "01H000000000000000000000B2", "name": "Primary 2" }, "name": "Class 2B", "formTeacher": { "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P7S", "name": "Bobby Lim" } }
+  ]
+}
+```
+
+Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
+
+### Levels — `specs/003-backend-api-db/contracts/levels.yaml`
+
+`Level` shape: `{ "ulid": "01HZX8K2D5Y3J8QF8W9B3N5P80", "name": "Primary 1", "active": true }`. The list is read-only (seeded by the user against the user-prepared MySQL container).
+
+#### `GET /api/v1.0/levels`
+
+Auth: session. CSRF: n/a.
+
+Success `200`: `{"data": [Level, ...]}` (typically the 10 seeded entries — Primary 1..6 + Secondary 1..4).
+
+Errors: `401`, `403` (`{"error":"cors"}`), `415`, `500`, `503`.
 
 ### Status code table
 
 | Code | When |
 |---|---|
-| 400 | Validation failure (Joi), unknown subject, unknown level |
-| 401 | No / unknown / expired session cookie on a protected endpoint (spec FR-010..FR-013) |
-| 403 | CORS allow-list rejected the origin (`{ "error": "cors" }`); CSRF double-submit mismatch (`{ "error": "csrf" }`) |
-| 404 | Teacher not found (`POST /api/v1.0/classes` only) |
-| 409 | Duplicate email / class name / form teacher |
-| 415 | `Content-Type` is not `application/json` |
-| 500 | Unhandled server error (no internal details leaked) |
-| 503 | MySQL or Redis briefly unavailable |
+| 400 | Joi validation failure; `{"error":"Invalid subject"}` / `{"error":"Invalid level"}` for unknown reference (server-side lookup is `ulid`-only) |
+| 401 | No / unknown / expired session on a protected endpoint. `{"error":"Unauthorized"}` on `GET /api/v1.0/me`; `{"error":"Invalid username or password"}` on `POST /api/v1.0/login` (covers unknown username, wrong password, and inactive user — same body to prevent enumeration) |
+| 403 | CORS allow-list rejected the origin (`{"error":"cors"}`); CSRF double-submit mismatch (`{"error":"csrf"}`) |
+| 404 | `{"error":"Teacher not found"}` — only on `POST /api/v1.0/classes` when `formTeacher.ulid` does not match any teacher |
+| 409 | Duplicate teacher email (`{"error":"Email already in use"}`); duplicate class name (`{"error":"Class name already in use"}`); teacher already assigned (`{"error":"Teacher already assigned"}`) |
+| 415 | `{"error":"Content-Type must be application/json"}` |
+| 500 | Unhandled server error — `{"error":"Internal server error"}` (stack trace logged but never sent to the client) |
+| 503 | MySQL or Redis briefly unavailable — `{"error":"Service temporarily unavailable, please retry"}` |
 
 ---
 
@@ -232,7 +443,7 @@ Every entry in every response carries the cross-cutting `ulid` row handle (per F
 - `name` (Teacher): 1..255 chars, required.
 - `subject` (Teacher): must match an active entry in `subjects`.
 - `email` (Teacher): syntactically valid; **unique across teachers**.
-- `contactNumber` (Teacher): exactly 8 digits, digits-only, **no** leading-digit restriction.
+- `contactNumber` (Teacher): exactly 8 digits, digits-only, with 8 or 9 leading-digit restriction.
 - `level` (Class): must match an active entry in `levels`.
 - `name` (Class): 1..255 chars; **globally unique**.
 - `teacherEmail` (Class): must reference an existing teacher; **unique across classes** (one form teacher per teacher).

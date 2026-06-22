@@ -7,7 +7,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN DB_HOST=mock DB_USER=mock DB_PASSWORD=mock DB_NAME=mock REDIS_URL=redis://mock npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
